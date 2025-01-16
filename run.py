@@ -308,7 +308,7 @@ def main():
             print('This model was trained for {} epochs'.format(checkpoint['epoch']))
         model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
-        wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else 
+        wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else wandb_id
         min_loss = checkpoint['min_loss'] if 'min_loss' in checkpoint else min_loss
 
     if not args.nolog and rank == 0:
