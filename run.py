@@ -409,7 +409,12 @@ def main():
         if args.resume:
             epoch = checkpoint['epoch']
             if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
-                optimizer.load_state_dict(checkpoint['optimizer'])
+                # for name, param in checkpoint['model_pos'].items():
+                #     print(f"Name: {name}, Shape: {param.shape}")
+                optimizer.load_state_dict({
+                    'state': checkpoint['optimizer']['state'],
+                    'param_groups': optimizer.param_groups
+                    })
             else:
                 print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
             if not args.coverlr:
