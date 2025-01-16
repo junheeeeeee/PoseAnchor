@@ -24,7 +24,7 @@ from copy import deepcopy
 
 from common.camera import *
 import collections
-from model.model_cross import *
+from model.MixSTEs import *
 from common.skeleton import *
 
 from common.loss import *
