@@ -34,6 +34,7 @@ def parse_args():
     parser.add_argument('--by-subject', action='store_true', help='break down error by subject (on evaluation)')
     parser.add_argument('--export-training-curves', action='store_true', help='save training curves as .png images')
     parser.add_argument('-m','--model', default='MixSTE2', type=str, metavar='NAME', help='model name')
+    parser.add_argument('-n', '--wandb_id', default='', type=str, metavar='ID', help='wandb id')
 
 
     # Model arguments

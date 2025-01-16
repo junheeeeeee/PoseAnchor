@@ -288,7 +288,7 @@ def main():
         print('INFO: Trainable parameter count:', model_params/1000000, 'Million')
     if not args.nolog and rank == 0:
         writer.add_text(args.log+'_'+TIMESTAMP + '/Trainable parameter count', str(model_params/1000000) + ' Million')
-
+    wandb_id = args.wandb_id
     # make model parallel
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
@@ -308,14 +308,13 @@ def main():
             print('This model was trained for {} epochs'.format(checkpoint['epoch']))
         model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
-        wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else None
+        wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else 
+        min_loss = checkpoint['min_loss'] if 'min_loss' in checkpoint else min_loss
 
     if not args.nolog and rank == 0:
         import wandb
                 
-        wandb_id = wandb_id if wandb_id is not None else wandb.util.generate_id()
-        if args.resume:
-            wandb_id = args.resume
+        
         wandb.init(id=wandb_id,
         # set the wandb project where this run will be logged
         resume="allow",
@@ -489,13 +488,7 @@ def main():
                 inputs_2d_error =  mpjpe(gt2d, inputs_2d)
                 loss_resid = mpjpe(inputs_traj, pred_traj)
 
-                # loss_traj = abs(pred_traj - inputs_traj).mean()
-                # loss_tpose = Tpose_mpjpe(predicted_3d_pos, inputs_3d)
-                # loss_smpj = smpjpe(predicted_3d_pos, inputs_3d)
                 loss_mpj = mpjpe(predicted_3d_pos - predicted_3d_pos[..., :1], inputs_3d - inputs_3d[..., :1])
-                # loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
-                # loss_3d_pos = cl_wmpjpe_switch(predicted_3d_pos, inputs_3d, w_mpjpe, epoch, args.epochs, minw=0.1, maxw=2.0)
-                # loss_3d_pos = cl_wmpjpe(predicted_3d_pos, inputs_3d, w_mpjpe, epoch, iter_num=args.epochs, switch_iter=10)
 
                 # Temporal Consistency Loss
                 dif_seq = predicted_3d_pos[:,1:,:,:] - predicted_3d_pos[:,:-1,:,:]
@@ -503,29 +496,11 @@ def main():
                 weights_mul = w_mpjpe
                 assert weights_mul.shape[0] == weights_joints.shape[-2]
                 weights_joints = torch.mul(weights_joints.permute(0,1,3,2),weights_mul).permute(0,1,3,2)
-                # weights_diff = 0.5
-                # index = [1,1,1,1,2,2,2,2,1]
-                # dif_seq = torch.mean(torch.multiply(weights_joints, torch.square(dif_seq)), dim=-1)
                 dif_seq = torch.mean(torch.multiply(weights_joints, torch.square(dif_seq)))
-                # loss_diff = (weights_diff * dif_seq)
 
-                # weights_diff = 2.0
                 loss_diff = 0.5 * dif_seq + 2.0 * mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
                 
-                # norm_loss = Norm_Loss(receptive_field, 12, num_joints)
-                # norm_loss_2 = Norm_Loss(receptive_field, 24, num_joints)
-                # norm_loss_3 = Norm_Loss(receptive_field, 8, num_joints)
-                # loss_diff += 0.001 * (norm_loss(predicted_3d_pos, inputs_3d) + \
-                #                     norm_loss_2(predicted_3d_pos, inputs_3d) + \
-                #                     norm_loss_3(predicted_3d_pos, inputs_3d))
 
-                ### bone length consistency loss
-                # loss_bone = bonelen_consistency_loss(args.dataset, args.dataset, predicted_3d_pos)
-
-                ### sym penalty loss
-                # loss_sym = sym_penalty(args.dataset, args.keypoints, predicted_3d_pos)
-
-                # loss_total = (loss_3d_pos[:,1:] + loss_diff)
                 loss_total = loss_3d_pos + loss_diff #+ loss_2d_pos * 0.1 # + loss_resid
                 
                 loss_total.backward(loss_total.clone().detach())
@@ -553,115 +528,115 @@ def main():
             torch.cuda.empty_cache()
 
             # End-of-epoch evaluation
-            
-            with torch.no_grad():
-                model_pos.load_state_dict(model_pos_train.state_dict(), strict=False)
-                model_pos.eval()
+            if rank == 0:
+                with torch.no_grad():
+                    model_pos.load_state_dict(model_pos_train.state_dict(), strict=False)
+                    model_pos.eval()
 
-                epoch_loss_3d_valid = 0
-                epoch_loss_traj_valid = 0
-                epoch_loss_2d_valid = 0
-                epoch_loss_3d_vel = 0
-                N = 0
-                if not args.no_eval:
-                    # Evaluate on test set
-                    for cam, batch, batch_2d in test_generator.next_epoch():
-                        inputs_3d = torch.from_numpy(batch.astype('float32'))
-                        inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                        cam = torch.from_numpy(cam.astype('float32'))
-
-                        ##### apply test-time-augmentation (following Videopose3d)
-                        inputs_2d_flip = inputs_2d.clone()
-                        inputs_2d_flip[:, :, :, 0] *= -1
-                        inputs_2d_flip[:, :, kps_left + kps_right, :] = inputs_2d_flip[:, :, kps_right + kps_left, :]
-
-                        ##### convert size
-                        inputs_3d_p = inputs_3d
-                        inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d_p)
-                        inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d_p)
-
-                        if torch.cuda.is_available():
-                            inputs_3d = inputs_3d.cuda()
-                            inputs_2d = inputs_2d.cuda()
-                            inputs_2d_flip = inputs_2d_flip.cuda()
-                            b = inputs_3d.shape[0]
-                            cam = cam.cuda()
-                            cam = cam.repeat(b,1)
-                        inputs_3d[:, :, 0] = 0
-                        predicted_3d_pos = model_pos(inputs_2d)
-                        predicted_3d_pos_flip = model_pos(inputs_2d_flip)
-
-                        predicted_3d_pos_flip[:, :, :, 0] *= -1
-                        predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
-                                                                                joints_right + joints_left]
-                        for i in range(predicted_3d_pos.shape[0]):
-                            # print(predicted_3d_pos[i,0,0,0], predicted_3d_pos_flip[i,0,0,0])
-                            predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
-                            # print(predicted_3d_pos[i,0,0,0], predicted_3d_pos_flip[i,0,0,0])
-                        # predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1, keepdim=True)
-
-                        # del inputs_2d, inputs_2d_flip
-                        # torch.cuda.empty_cache()
-
-                        # set root as zero
-                        # predicted_3d_pos[:, :, 0] =
-                        loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
-                        epoch_loss_3d_valid += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
-                        N += inputs_3d.shape[0] * inputs_3d.shape[1]
-
-                        loss_3d_vel = mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
-                        epoch_loss_3d_vel += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_vel.item()
-
-
-                        # del inputs_3d, loss_3d_pos, predicted_3d_pos
-                        # torch.cuda.empty_cache()
-
-                    losses_3d_valid.append(epoch_loss_3d_valid / N)
-                    epoch_loss_3d_vel = epoch_loss_3d_vel/N
-
-                    # Evaluate on training set, this time in evaluation mode
-                    epoch_loss_3d_train_eval = 0
-                    epoch_loss_traj_train_eval = 0
-                    epoch_loss_2d_train_labeled_eval = 0
+                    epoch_loss_3d_valid = 0
+                    epoch_loss_traj_valid = 0
+                    epoch_loss_2d_valid = 0
+                    epoch_loss_3d_vel = 0
                     N = 0
-                    for cam, batch, batch_2d in train_generator_eval.next_epoch():
-                        if batch_2d.shape[1] == 0:
-                            # This can only happen when downsampling the dataset
-                            continue
+                    if not args.no_eval:
+                        # Evaluate on test set
+                        for cam, batch, batch_2d in test_generator.next_epoch():
+                            inputs_3d = torch.from_numpy(batch.astype('float32'))
+                            inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                            cam = torch.from_numpy(cam.astype('float32'))
 
-                        inputs_3d = torch.from_numpy(batch.astype('float32'))
-                        inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                        cam = torch.from_numpy(cam.astype('float32'))
-                        inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
+                            ##### apply test-time-augmentation (following Videopose3d)
+                            inputs_2d_flip = inputs_2d.clone()
+                            inputs_2d_flip[:, :, :, 0] *= -1
+                            inputs_2d_flip[:, :, kps_left + kps_right, :] = inputs_2d_flip[:, :, kps_right + kps_left, :]
 
-                        if torch.cuda.is_available():
-                            inputs_3d = inputs_3d.cuda()
-                            inputs_2d = inputs_2d.cuda()
-                            b = inputs_3d.shape[0]
-                            cam = cam.cuda()
-                            cam = cam.repeat(b,1)
-                        inputs_3d[:, :, 0] = 0
+                            ##### convert size
+                            inputs_3d_p = inputs_3d
+                            inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d_p)
+                            inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d_p)
 
-                        # Compute 3D poses
-                        predicted_3d_pos = model_pos(inputs_2d)
+                            if torch.cuda.is_available():
+                                inputs_3d = inputs_3d.cuda()
+                                inputs_2d = inputs_2d.cuda()
+                                inputs_2d_flip = inputs_2d_flip.cuda()
+                                b = inputs_3d.shape[0]
+                                cam = cam.cuda()
+                                cam = cam.repeat(b,1)
+                            inputs_3d[:, :, 0] = 0
+                            predicted_3d_pos = model_pos(inputs_2d)
+                            predicted_3d_pos_flip = model_pos(inputs_2d_flip)
 
-                        # del inputs_2d
-                        # torch.cuda.empty_cache()
-                        
-                        # set root as zero
-                        # predicted_3d_pos[:, :, 0] = 0
-                        loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
-                        epoch_loss_3d_train_eval += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
-                        N += inputs_3d.shape[0] * inputs_3d.shape[1]
+                            predicted_3d_pos_flip[:, :, :, 0] *= -1
+                            predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
+                                                                                    joints_right + joints_left]
+                            for i in range(predicted_3d_pos.shape[0]):
+                                # print(predicted_3d_pos[i,0,0,0], predicted_3d_pos_flip[i,0,0,0])
+                                predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
+                                # print(predicted_3d_pos[i,0,0,0], predicted_3d_pos_flip[i,0,0,0])
+                            # predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1, keepdim=True)
 
-                        # del inputs_3d, loss_3d_pos, predicted_3d_pos
-                        # torch.cuda.empty_cache()
+                            # del inputs_2d, inputs_2d_flip
+                            # torch.cuda.empty_cache()
 
-                    losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
+                            # set root as zero
+                            # predicted_3d_pos[:, :, 0] =
+                            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+                            epoch_loss_3d_valid += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
+                            N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-                    # Evaluate 2D loss on unlabeled training set (in evaluation mode)
-                    epoch_loss_2d_train_unlabeled_eval = 0
-                    N_semi = 0
+                            loss_3d_vel = mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
+                            epoch_loss_3d_vel += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_vel.item()
+
+
+                            # del inputs_3d, loss_3d_pos, predicted_3d_pos
+                            # torch.cuda.empty_cache()
+
+                        losses_3d_valid.append(epoch_loss_3d_valid / N)
+                        epoch_loss_3d_vel = epoch_loss_3d_vel/N
+
+                        # Evaluate on training set, this time in evaluation mode
+                        epoch_loss_3d_train_eval = 0
+                        epoch_loss_traj_train_eval = 0
+                        epoch_loss_2d_train_labeled_eval = 0
+                        N = 0
+                        for cam, batch, batch_2d in train_generator_eval.next_epoch():
+                            if batch_2d.shape[1] == 0:
+                                # This can only happen when downsampling the dataset
+                                continue
+
+                            inputs_3d = torch.from_numpy(batch.astype('float32'))
+                            inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                            cam = torch.from_numpy(cam.astype('float32'))
+                            inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
+
+                            if torch.cuda.is_available():
+                                inputs_3d = inputs_3d.cuda()
+                                inputs_2d = inputs_2d.cuda()
+                                b = inputs_3d.shape[0]
+                                cam = cam.cuda()
+                                cam = cam.repeat(b,1)
+                            inputs_3d[:, :, 0] = 0
+
+                            # Compute 3D poses
+                            predicted_3d_pos = model_pos(inputs_2d)
+
+                            # del inputs_2d
+                            # torch.cuda.empty_cache()
+                            
+                            # set root as zero
+                            # predicted_3d_pos[:, :, 0] = 0
+                            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+                            epoch_loss_3d_train_eval += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
+                            N += inputs_3d.shape[0] * inputs_3d.shape[1]
+
+                            # del inputs_3d, loss_3d_pos, predicted_3d_pos
+                            # torch.cuda.empty_cache()
+
+                        losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
+
+                        # Evaluate 2D loss on unlabeled training set (in evaluation mode)
+                        epoch_loss_2d_train_unlabeled_eval = 0
+                        N_semi = 0
 
             elapsed = (time() - start_time) / 60
             if rank == 0:
@@ -709,7 +684,7 @@ def main():
                     'lr': lr,
                     'optimizer': optimizer.state_dict(),
                     'model_pos': model_pos_train.state_dict(),
-                    # 'min_loss': min_loss
+                    'min_loss': min_loss
                     # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                     # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
                 }, chk_path)
@@ -726,6 +701,7 @@ def main():
                         'lr': lr,
                         'optimizer': optimizer.state_dict(),
                         'model_pos': model_pos_train.state_dict(),
+                        "min_loss": min_loss
                         # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                         # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
                     }, best_chk_path)
