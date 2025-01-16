@@ -487,6 +487,10 @@ class  MixSTE2(nn.Module):
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim , 3),
         )
+        # self.head = nn.Sequential(OrderedDict([
+        #     ('act', nn.Tanh()),
+        #     ('fc2', nn.Linear(embed_dim , 3)),
+        # ]))
         # nn.init.kaiming_normal_(self.head[1].weight)
         # torch.nn.init.xavier_uniform_(self.head[1].weight)
         # torch.nn.init.normal_(self.head[1].bias, std = 1e-6)
