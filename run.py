@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # command:
-# OMP_NUM_THREADS=8 torchrun --nproc_per_node=2 run_root2.py -k cpn_ft_h36m_dbb -f 243 -s 243 -l log/root -c checkpoint/root -m CSTE
+# CUDA_VISIBLE_DEVICES=1,2 OMP_NUM_THREADS=8 torchrun --nproc_per_node=2 run_root2.py -k cpn_ft_h36m_dbb -f 243 -s 243 -l log/root -c checkpoint/root -m CSTE
 
 import numpy as np
 
@@ -25,7 +25,6 @@ from copy import deepcopy
 from common.camera import *
 import collections
 from model.model_cross import *
-
 from common.skeleton import *
 
 from common.loss import *
@@ -43,7 +42,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
 
 #cudnn.benchmark = True       
 torch.backends.cudnn.deterministic = True
@@ -298,8 +296,6 @@ def main():
         model_pos_train = model_pos_train.to(rank)
         model_pos_train = DDP(model_pos_train, device_ids=[rank])
 
-
-
     if args.resume or args.evaluate:
         chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
         # chk_filename = args.resume or args.evaluate
@@ -309,7 +305,7 @@ def main():
         model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
         wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else None
-        
+
     if not args.nolog and rank == 0:
         import wandb
                 
@@ -324,7 +320,6 @@ def main():
         # track hyperparameters and run metadata
         config=args
         )
-
 
     test_generator = UnchunkedGenerator_Seq(cameras_valid, poses_valid, poses_valid_2d,
                                         pad=pad, causal_shift=causal_shift, augment=False,
@@ -432,6 +427,7 @@ def main():
             batch_time = AverageMeter()
             data_time = AverageMeter()
             mpj = AverageMeter()
+            mpj_2d = AverageMeter()
             end = time()
 
             # Just train 1 time, for quick debug
@@ -457,13 +453,14 @@ def main():
 
                 # Predict 3D poses
                 predicted_3d_pos = model_pos_train(inputs_2d)
+
                 gt2d = project_to_2d_linear(inputs_3d + inputs_traj, cameras_train)
-                pred_traj, _ = get_root(predicted_3d_pos, inputs_2d, cameras_train)
-                pred_2d = project_to_2d_linear(predicted_3d_pos + pred_traj, cameras_train)
+                pred_traj, _ = get_root(predicted_3d_pos, gt2d, cameras_train)
+                predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + pred_traj, cameras_train)
 
 
-                inputs_3d[:, :, :1] = inputs_traj
-                predicted_3d_pos[:, :, :1] = pred_traj
+                # inputs_3d[:, :, :1] = inputs_traj
+                # predicted_3d_pos[:, :, :1] = pred_traj
 
 
                 # del inputs_2d
@@ -479,9 +476,9 @@ def main():
                     w_mpjpe = torch.tensor([1, 1, 2.5, 2.5, 1, 2.5, 2.5, 1, 1.5, 1.5, 4, 4, 1.5, 4, 4]).cuda()
                 
                 loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
-                loss_2d_pos = mpjpe(gt2d, pred_2d)
+                loss_2d_pos = mpjpe(gt2d, predicted_2d_pos)
                 inputs_2d_error =  mpjpe(gt2d, inputs_2d)
-                loss_resid = torch.square(get_residuals(predicted_3d_pos, gt2d, inputs_traj, cameras_train)).mean()
+                loss_resid = mpjpe(inputs_traj, pred_traj)
 
                 # loss_traj = abs(pred_traj - inputs_traj).mean()
                 # loss_tpose = Tpose_mpjpe(predicted_3d_pos, inputs_3d)
@@ -520,7 +517,7 @@ def main():
                 # loss_sym = sym_penalty(args.dataset, args.keypoints, predicted_3d_pos)
 
                 # loss_total = (loss_3d_pos[:,1:] + loss_diff)
-                loss_total = loss_3d_pos + loss_diff #+ loss_2d_pos + loss_resid
+                loss_total = loss_3d_pos + loss_diff + loss_2d_pos * 0.1 # + loss_resid
                 
                 loss_total.backward(loss_total.clone().detach())
 
@@ -534,11 +531,12 @@ def main():
                 batch_time.update(time() - end)
                 end = time()
                 mpj.update(loss_mpj.item() * 1000, inputs_3d.shape[0])
+                mpj_2d.update(loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 100, inputs_3d.shape[0])
                 if rank == 0:
                     bar.suffix = '({batch}/{size}) Batch: {bt:.3f}s | Elapsed Time: {ttl:} | ETA: {eta:} ' \
-                            '| MPJPE: {mpj: .1f}({loss: .1f}) | 2D Error:  {p2d: .1f}({input2d: .1f})| Residual Error: {res: .4f}' \
+                            '| MPJPE: {mpj: .1f}({loss: .1f}) | 2D Error:  {p2d: .1f}({input2d: .1f})| MRPE: {res: .4f}' \
                     .format(batch=i + 1, size=len(dataloader), bt=batch_time.avg,
-                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= loss_2d_pos.item() * 1000,res=loss_resid.item(),input2d = loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 1000)
+                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= loss_2d_pos.item() * 1000,res=loss_resid.item() * 1000 ,input2d = mpj_2d.avg)
                     bar.next()
                 i += 1
             bar.finish()
@@ -702,7 +700,6 @@ def main():
                     'lr': lr,
                     'optimizer': optimizer.state_dict(),
                     'model_pos': model_pos_train.state_dict(),
-                    "wandb_id": wandb_id
                     # 'min_loss': min_loss
                     # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                     # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
@@ -720,7 +717,6 @@ def main():
                         'lr': lr,
                         'optimizer': optimizer.state_dict(),
                         'model_pos': model_pos_train.state_dict(),
-                        "wandb_id": wandb_id
                         # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                         # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
                     }, best_chk_path)
@@ -829,6 +825,7 @@ def main():
                 inputs_traj = inputs_3d[:, :, :1].clone()
                 inputs_3d[:, :, 0] = 0
                 
+                
                 predicted_3d_pos = model_eval(inputs_2d)
                 predicted_3d_pos_flip = model_eval(inputs_2d_flip)
                 predicted_3d_pos_flip[:, :, :, 0] *= -1
@@ -837,7 +834,7 @@ def main():
                 for i in range(predicted_3d_pos.shape[0]):
                     predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
                 # predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1, keepdim=True)
-
+                pred_root, _ = get_root(predicted_3d_pos, inputs_2d, cam)
                 # del inputs_2d, inputs_2d_flip
                 # torch.cuda.empty_cache()
 
@@ -858,7 +855,7 @@ def main():
                 # error, joints_err = mpjpe(predicted_3d_pos, inputs_3d, return_joints_err=True)
                 # joints_errs.append(joints_err)
 
-                epoch_loss_3d_pos_scale += inputs_3d.shape[0]*inputs_3d.shape[1] * smpjpe(predicted_3d_pos, inputs_3d).item()
+                epoch_loss_3d_pos_scale += inputs_3d.shape[0]*inputs_3d.shape[1] * mpjpe(predicted_3d_pos + pred_root, inputs_3d + inputs_traj).item()
 
                 epoch_loss_3d_pos += inputs_3d.shape[0]*inputs_3d.shape[1] * error.item()
                 N += inputs_3d.shape[0] * inputs_3d.shape[1]
