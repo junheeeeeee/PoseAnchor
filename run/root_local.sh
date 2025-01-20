@@ -1,0 +1,1 @@
+OMP_NUM_THREADS=8 torchrun --nproc_per_node=2 run.py -k cpn_ft_h36m_dbb -f 243 -s 243  -c checkpoint/STE_root2 -e 256 -lr 0.00004 -cf 256 -b 2
