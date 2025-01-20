@@ -317,6 +317,7 @@ def main():
                 
         
         wandb.init(id=wandb_id,
+        name=args.checkpoint+'_'+TIMESTAMP,
         # set the wandb project where this run will be logged
         resume="allow",
         project="Trajectory-Aware",
@@ -753,10 +754,10 @@ def main():
                 if not use_trajectory_model:
                     # load best checkpoint
                     if args.evaluate == '':
-                        chk_file_path = os.path.join(args.checkpoint, 'best_epoch.bin')
+                        chk_file_path = os.path.join("checkpoint/", args.checkpoint, 'best_epoch.bin')
                         print('Loading best checkpoint', chk_file_path)
                     elif args.evaluate != '':
-                        chk_file_path = os.path.join(args.checkpoint, args.evaluate)
+                        chk_file_path = os.path.join("checkpoint/", args.checkpoint, args.evaluate)
                         print('Loading evaluate checkpoint', chk_file_path)
                     checkpoint = torch.load(chk_file_path, map_location=lambda storage, loc: storage)
                     print('This model was trained for {} epochs'.format(checkpoint['epoch']))
