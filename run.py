@@ -692,7 +692,8 @@ def main():
                     'lr': lr,
                     'optimizer': optimizer.state_dict(),
                     'model_pos': model_pos_train.state_dict(),
-                    'min_loss': min_loss
+                    'min_loss': min_loss,
+                    'wandb_id': wandb_id
                     # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                     # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
                 }, chk_path)
@@ -709,7 +710,8 @@ def main():
                         'lr': lr,
                         'optimizer': optimizer.state_dict(),
                         'model_pos': model_pos_train.state_dict(),
-                        "min_loss": min_loss
+                        "min_loss": min_loss,
+                        'wandb_id': wandb_id
                         # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                         # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
                     }, best_chk_path)
