@@ -69,14 +69,16 @@ class ChunkedDataset_Seq(Dataset):
             n_chunks = (poses_2d[i].shape[0] + stride - 1) // stride
 
             # bounds = np.arange(n_chunks+1)*stride - offset
-            starts = np.arange(n_chunks - 1) * stride
-            offset = ((poses_2d[i].shape[0] - starts[-1]) + chunk_length) /2 - (poses_2d[i].shape[0] - starts[-1])
-            starts -= int(offset)
+            starts = np.arange(n_chunks) * stride
+            # offset = ((poses_2d[i].shape[0] - starts[-1]) + chunk_length) /2 - (poses_2d[i].shape[0] - starts[-1])
+            # starts -= int(offset)
             ends = starts + chunk_length
-            augment_vector = np.full(len(starts - 1), False, dtype=bool)
-            pairs += zip(np.repeat(i, len(starts - 1)), starts, ends, augment_vector)
+            ends[-1] = min(ends[-1], poses_2d[i].shape[0])
+            starts[-1] = min(starts[-1], poses_2d[i].shape[0] - chunk_length)
+            augment_vector = np.full(len(starts), False, dtype=bool)
+            pairs += zip(np.repeat(i, len(starts)), starts, ends, augment_vector)
             if augment:
-                pairs += zip(np.repeat(i, len(starts - 1)), starts, ends, ~augment_vector)
+                pairs += zip(np.repeat(i, len(starts)), starts, ends, ~augment_vector)
         self.pairs = pairs
 
     def __len__(self):
@@ -98,7 +100,7 @@ class ChunkedDataset_Seq(Dataset):
         # 2D poses 추출
         # ----------------------------
         seq_2d = self.poses_2d[seq_i]
-        random_shift = np.random.randint(-20, 20)
+        random_shift = 0
         start_2d = start_3d + random_shift  # pad, causal_shift 반영하려면 추가할 수도 있음
         end_2d   = end_3d + random_shift
 

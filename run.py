@@ -42,7 +42,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
+import wandb
 #cudnn.benchmark = True       
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
@@ -288,7 +288,8 @@ def main():
         print('INFO: Trainable parameter count:', model_params/1000000, 'Million')
     if not args.nolog and rank == 0:
         writer.add_text(args.log+'_'+TIMESTAMP + '/Trainable parameter count', str(model_params/1000000) + ' Million')
-    wandb_id = args.wandb_id
+
+    wandb_id = args.wandb_id if args.wandb_id != '' else wandb.util.generate_id()
     # make model parallel
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
@@ -312,7 +313,7 @@ def main():
         min_loss = checkpoint['min_loss'] if 'min_loss' in checkpoint else min_loss
 
     if not args.nolog and rank == 0:
-        import wandb
+        
                 
         
         wandb.init(id=wandb_id,
@@ -436,7 +437,9 @@ def main():
             data_time = AverageMeter()
             mpj = AverageMeter()
             mpj_2d = AverageMeter()
+            root = AverageMeter()
             end = time()
+
 
             # Just train 1 time, for quick debug
             notrain=False
@@ -482,8 +485,10 @@ def main():
                 
                 elif args.dataset=='humaneva15':
                     w_mpjpe = torch.tensor([1, 1, 2.5, 2.5, 1, 2.5, 2.5, 1, 1.5, 1.5, 4, 4, 1.5, 4, 4]).cuda()
-                
-                loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
+
+                b, f , _, _ = inputs_3d.shape
+                # loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
+                loss_3d_pos = mpjpe(inputs_3d.reshape(b,f, -1), predicted_3d_pos.reshape(b,f, -1))
                 loss_2d_pos = mpjpe(gt2d, predicted_2d_pos)
                 inputs_2d_error =  mpjpe(gt2d, inputs_2d)
                 loss_resid = mpjpe(inputs_traj, pred_traj)
@@ -501,7 +506,7 @@ def main():
                 loss_diff = 0.5 * dif_seq + 2.0 * mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
                 
 
-                loss_total = loss_3d_pos + loss_diff #+ loss_2d_pos * 0.1 # + loss_resid
+                loss_total = loss_3d_pos + loss_diff + loss_2d_pos + loss_resid
                 
                 loss_total.backward(loss_total.clone().detach())
 
@@ -516,11 +521,12 @@ def main():
                 end = time()
                 mpj.update(loss_mpj.item() * 1000, inputs_3d.shape[0])
                 mpj_2d.update(loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 100, inputs_3d.shape[0])
+                root.update(loss_resid.item() * 1000, inputs_3d.shape[0])
                 if rank == 0:
                     bar.suffix = '({batch}/{size}) Batch: {bt:.3f}s | Elapsed Time: {ttl:} | ETA: {eta:} ' \
-                            '| MPJPE: {mpj: .1f}({loss: .1f}) | 2D Error:  {p2d: .1f}({input2d: .1f})| MRPE: {res: .4f}' \
+                            '| MPJPE: {mpj: .1f}({loss: .1f}) | 2D Error:  {p2d: .1f}({input2d: .1f})| MRPE: {res: .1f}({root: .1f})' \
                     .format(batch=i + 1, size=len(dataloader), bt=batch_time.avg,
-                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= loss_2d_pos.item() * 1000,res=loss_resid.item() * 1000 ,input2d = mpj_2d.avg)
+                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= loss_2d_pos.item() * 1000,res=loss_resid.item() * 1000 ,input2d = mpj_2d.avg, root = root.avg)
                     bar.next()
                 i += 1
             bar.finish()
