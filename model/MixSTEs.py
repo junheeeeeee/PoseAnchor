@@ -588,7 +588,7 @@ class  MixSTE2(nn.Module):
         # now x shape is (b f (n * 3))
 
         x = x.view(b, f, n, -1)
-        # x[..., 0, :] *= 0  # related root joint
+        x[..., 0, :] *= 0  # related root joint
 
         return x
 
