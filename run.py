@@ -301,6 +301,7 @@ def main():
 
     if args.resume or args.evaluate:
         chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
+        chk_filename = "checkpoint/" + chk_filename
         # chk_filename = args.resume or args.evaluate
         if rank == 0:
             print('Loading checkpoint', chk_filename)
