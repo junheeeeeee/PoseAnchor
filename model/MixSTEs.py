@@ -117,7 +117,7 @@ class Attention(nn.Module):
         
         # attn = self.quantize(self.sig(attn))
         attn = self.attn_drop(attn)
-        
+        print(attn.shape)
         if self.comb==True:
             x = (attn @ v.transpose(-2, -1)).transpose(-2, -1)
             # print(x.shape)
@@ -135,6 +135,123 @@ class Attention(nn.Module):
         attn = self.sig(attn).round()
         attn = attn / attn.sum(dim=-1, keepdim=True).clamp(min=1)
         return attn
+    
+class SGAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., comb=False, vis=False, pose_num = 17):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+        self.scale = qk_scale or head_dim ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # nn.init.kaiming_normal_(self.qkv.weight)
+        # torch.nn.init.xavier_uniform_(self.qkv.weight)
+        # torch.nn.init.zeros_(self.qkv.bias)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        # nn.init.kaiming_normal_(self.proj.weight)
+        # torch.nn.init.xavier_uniform_(self.proj.weight)
+        # torch.nn.init.zeros_(self.proj.bias)   
+
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.comb = comb
+        self.vis = vis
+        self.sig = nn.Sigmoid()
+        self.quantize = QuantizeLayer()
+
+        self.pose_graph = nn.Sequential(
+            nn.Parameter(torch.zeros(pose_num, pose_num)),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, vis=False):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # Now x shape (3, B, heads, N, C//heads)
+        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        if self.comb==True:
+            attn = (q.transpose(-2, -1) @ k) * self.scale
+        elif self.comb==False:
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        attn = attn * self.pose_graph[None, None, :, :]
+        attn = attn.softmax(dim=-1)
+        # attn = self.binary_atten(attn)
+        
+        # attn = self.quantize(self.sig(attn))
+        attn = self.attn_drop(attn)
+        
+        if self.comb==True:
+            x = (attn @ v.transpose(-2, -1)).transpose(-2, -1)
+            # print(x.shape)
+            x = rearrange(x, 'B H N C -> B N (H C)')
+            # print(x.shape)
+        elif self.comb==False:
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class TGAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., comb=False, vis=False, frame_num = 243):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+        self.scale = qk_scale or head_dim ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # nn.init.kaiming_normal_(self.qkv.weight)
+        # torch.nn.init.xavier_uniform_(self.qkv.weight)
+        # torch.nn.init.zeros_(self.qkv.bias)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        # nn.init.kaiming_normal_(self.proj.weight)
+        # torch.nn.init.xavier_uniform_(self.proj.weight)
+        # torch.nn.init.zeros_(self.proj.bias)   
+
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.comb = comb
+        self.vis = vis
+        self.sig = nn.Sigmoid()
+        self.quantize = QuantizeLayer()
+
+        self.frame_graph = nn.Sequential(
+            nn.Parameter(torch.zeros(frame_num, frame_num)),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, vis=False):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # Now x shape (3, B, heads, N, C//heads)
+        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        if self.comb==True:
+            attn = (q.transpose(-2, -1) @ k) * self.scale
+        elif self.comb==False:
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        attn = attn * self.frame_graph[None, None, :, :]
+        attn = attn.softmax(dim=-1)
+        # attn = self.binary_atten(attn)
+        
+        # attn = self.quantize(self.sig(attn))
+        attn = self.attn_drop(attn)
+        
+        if self.comb==True:
+            x = (attn @ v.transpose(-2, -1)).transpose(-2, -1)
+            # print(x.shape)
+            x = rearrange(x, 'B H N C -> B N (H C)')
+            # print(x.shape)
+        elif self.comb==False:
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
 
 class TemporalAttention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., comb=False, vis=False):
@@ -475,6 +592,177 @@ class  MixSTE2(nn.Module):
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, comb=False, changedim=False, currentdim=i+1, depth=depth)
+            for i in range(depth)])
+
+        self.Spatial_norm = norm_layer(embed_dim_ratio)
+        self.Temporal_norm = norm_layer(embed_dim)
+
+        ####### A easy way to implement weighted mean
+        # self.weighted_mean = torch.nn.Conv1d(in_channels=num_frame, out_channels=num_frame, kernel_size=1)
+
+        self.head = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim , 3),
+        )
+        # self.head = nn.Sequential(OrderedDict([
+        #     ('act', nn.Tanh()),
+        #     ('fc2', nn.Linear(embed_dim , 3)),
+        # ]))
+        # nn.init.kaiming_normal_(self.head[1].weight)
+        # torch.nn.init.xavier_uniform_(self.head[1].weight)
+        # torch.nn.init.normal_(self.head[1].bias, std = 1e-6)
+
+
+    def STE_forward(self, x):
+        b, f, n, c = x.shape  ##### b is batch size, f is number of frames, n is number of joints, c is channel size?
+        x = rearrange(x, 'b f n c  -> (b f) n c', )
+        ### now x is [batch_size, receptive frames, joint_num, 2 channels]
+        x = self.Spatial_patch_to_embedding(x)
+        # x = rearrange(x, 'bnew c n  -> bnew n c', )
+        x += self.Spatial_pos_embed
+        x = self.pos_drop(x)
+
+        blk = self.STEblocks[0]
+        x = blk(x)
+        # x = blk(x, vis=True)
+
+        x = self.Spatial_norm(x)
+        x = rearrange(x, '(b f) n cw -> (b n) f cw', f=f)
+        return x
+
+    def TTE_foward(self, x):
+        assert len(x.shape) == 3, "shape is equal to 3"
+        b, f, _  = x.shape
+        x += self.Temporal_pos_embed
+        x = self.pos_drop(x)
+        blk = self.TTEblocks[0]
+        x = blk(x)
+        # x = blk(x, vis=True)
+        # exit()
+
+        x = self.Temporal_norm(x)
+        return x
+
+    def ST_foward(self, x):
+        assert len(x.shape)==4, "shape is equal to 4"
+        b, f, n, cw = x.shape
+        for i in range(1, self.block_depth):
+            x = rearrange(x, 'b f n cw -> (b f) n cw')
+            steblock = self.STEblocks[i]
+            tteblock = self.TTEblocks[i]
+            
+            # x += self.Spatial_pos_embed
+            # x = self.pos_drop(x)
+            # if i==7:
+            #     x = steblock(x, vis=True)
+            x = steblock(x)
+            x = self.Spatial_norm(x)
+            x = rearrange(x, '(b f) n cw -> (b n) f cw', f=f)
+
+            # x += self.Temporal_pos_embed
+            # x = self.pos_drop(x)
+            # if i==7:
+            #     x = tteblock(x, vis=True)
+            #     exit()
+            x = tteblock(x)
+            x = self.Temporal_norm(x)
+            x = rearrange(x, '(b n) f cw -> b f n cw', n=n)
+        
+        # x = rearrange(x, 'b f n cw -> (b n) f cw', n=n)
+        # x = self.weighted_mean(x)
+        # x = rearrange(x, '(b n) f cw -> b f n cw', n=n)
+        # x = x.view(b, f, -1)
+        return x
+
+    def forward(self, x):
+        b, f, n, c = x.shape
+        ### now x is [batch_size, 2 channels, receptive frames, joint_num], following image data
+        # x shape:(b f n c)
+        # torch.cuda.synchronize()
+        # st = time.time()
+        x = self.STE_forward(x)
+
+        # now x shape is (b n) f cw
+        # et = time.time()
+        # print('STE_forward  ', (et-st)*2000)
+
+        # st = time.time()
+        x = self.TTE_foward(x)
+        # et = time.time()
+        # print('TTE_foward  ', (et-st)*2000)
+
+        # now x shape is (b n) f cw
+        x = rearrange(x, '(b n) f cw -> b f n cw', n=n)
+        # st = time.time()
+        x = self.ST_foward(x)
+        # et = time.time()
+        # print('ST_foward  ', (et-st)*2000)
+
+        # st = time.time()
+        x = self.head(x)
+        # et = time.time()
+        # print('head  ', (et-st)*2000)
+        # now x shape is (b f (n * 3))
+
+        x = x.view(b, f, n, -1)
+        x[..., 0, :] *= 0  # related root joint
+
+        return x
+
+class  MixSTE3(nn.Module):
+    def __init__(self, num_frame=9, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
+                 num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.2,  norm_layer=None):
+        """    ##########hybrid_backbone=None, representation_size=None,
+        Args:
+            num_frame (int, tuple): input frame number
+            num_joints (int, tuple): joints number
+            in_chans (int): number of input channels, 2D joints have 2 channels: (x,y)
+            embed_dim_ratio (int): embedding dimension ratio
+            depth (int): depth of transformer
+            num_heads (int): number of attention heads
+            mlp_ratio (int): ratio of mlp hidden dim to embedding dim
+            qkv_bias (bool): enable bias for qkv if True
+            qk_scale (float): override default qk scale of head_dim ** -0.5 if set
+            drop_rate (float): dropout rate
+            attn_drop_rate (float): attention dropout rate
+            drop_path_rate (float): stochastic depth rate
+            norm_layer: (nn.Module): normalization layer
+        """
+        super().__init__()
+
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        embed_dim = embed_dim_ratio   #### temporal embed_dim is num_joints * spatial embedding dim ratio
+        out_dim = 3     #### output dimension is num_joints * 3
+
+        ### spatial patch embedding
+        self.Spatial_patch_to_embedding = nn.Linear(in_chans, embed_dim_ratio)
+        # self.Spatial_patch_to_embedding = nn.Conv1d(in_chans, embed_dim_ratio, kernel_size=1, stride=1)
+        self.Spatial_pos_embed = nn.Parameter(torch.zeros(1, num_joints, embed_dim_ratio))
+        # nn.init.kaiming_normal_(self.Spatial_pos_embed)
+        # torch.nn.init.normal_(self.Spatial_pos_embed, std = .02)
+
+        self.Temporal_pos_embed = nn.Parameter(torch.zeros(1, num_frame, embed_dim))
+        # nn.init.kaiming_normal_(self.Temporal_pos_embed)
+        # torch.nn.init.normal_(self.Temporal_pos_embed, std = .02)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.block_depth = depth
+
+        self.STEblocks = nn.ModuleList([
+            # Block: Attention Block
+            Block(
+                dim=embed_dim_ratio, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, attention=SGAttention)
+            for i in range(depth)])
+
+        self.TTEblocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, comb=False, changedim=False, currentdim=i+1, depth=depth, attention=TGAttention)
             for i in range(depth)])
 
         self.Spatial_norm = norm_layer(embed_dim_ratio)
