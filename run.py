@@ -263,15 +263,18 @@ def main():
     num_joints = keypoints_metadata['num_joints']
 
     #########################################PoseTransformer
-    if args.model == 'MixSTE2' or args.model == 'PoseMamba':
-        model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
-                num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0.1)
-
-        model_pos =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
-                num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0)
-    else:
+    if args.model == 'MotionAGFormer':
         model_pos_train = load_model(args.model, args)
         model_pos = load_model(args.model, args)
+    else:
+        try:
+            model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
+                num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0.1)
+
+            model_pos =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
+                    num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0)
+        except:
+            raise Exception("Undefined model name")
 
 
     ################ load weight ########################
@@ -508,7 +511,7 @@ def main():
                 loss_diff = 0.5 * dif_seq + 2.0 * mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
                 
 
-                loss_total = loss_3d_pos + loss_diff + loss_2d_pos + loss_resid
+                loss_total = loss_3d_pos + loss_diff #+ loss_2d_pos + loss_resid
                 
                 loss_total.backward(loss_total.clone().detach())
 

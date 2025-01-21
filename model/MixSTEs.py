@@ -161,10 +161,8 @@ class SGAttention(nn.Module):
         self.sig = nn.Sigmoid()
         self.quantize = QuantizeLayer()
 
-        self.pose_graph = nn.Sequential(
-            nn.Parameter(torch.zeros(pose_num, pose_num)),
-            nn.Sigmoid()
-        )
+        self.pose_graph = nn.Parameter(torch.zeros(pose_num, pose_num))
+
 
     def forward(self, x, vis=False):
         B, N, C = x.shape
@@ -176,7 +174,7 @@ class SGAttention(nn.Module):
         elif self.comb==False:
             attn = (q @ k.transpose(-2, -1)) * self.scale
 
-        attn = attn * self.pose_graph[None, None, :, :]
+        attn = attn * self.sig(self.pose_graph[None, None, :, :])
         attn = attn.softmax(dim=-1)
         # attn = self.binary_atten(attn)
         
@@ -220,10 +218,7 @@ class TGAttention(nn.Module):
         self.sig = nn.Sigmoid()
         self.quantize = QuantizeLayer()
 
-        self.frame_graph = nn.Sequential(
-            nn.Parameter(torch.zeros(frame_num, frame_num)),
-            nn.Sigmoid()
-        )
+        self.frame_graph = nn.Parameter(torch.zeros(frame_num, frame_num))
 
     def forward(self, x, vis=False):
         B, N, C = x.shape
@@ -235,7 +230,7 @@ class TGAttention(nn.Module):
         elif self.comb==False:
             attn = (q @ k.transpose(-2, -1)) * self.scale
 
-        attn = attn * self.frame_graph[None, None, :, :]
+        attn = attn * self.sig(self.frame_graph[None, None, :, :])
         attn = attn.softmax(dim=-1)
         # attn = self.binary_atten(attn)
         

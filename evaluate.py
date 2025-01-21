@@ -225,15 +225,18 @@ height = cam['res_h']
 num_joints = keypoints_metadata['num_joints']
 
 #########################################PoseTransformer
-if args.model == 'MixSTE2' or args.model == 'PoseMamba':
-    model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
+if args.model == 'MotionAGFormer':
+        model_pos_train = load_model(args.model, args)
+        model_pos = load_model(args.model, args)
+else:
+    try:
+        model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
             num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0.1)
 
-    model_pos =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
-            num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0)
-else:
-    model_pos_train = load_model(args.model, args)
-    model_pos = load_model(args.model, args)
+        model_pos =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
+                num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0)
+    except:
+        raise Exception("Undefined model name")
 
 
 ################ load weight ########################
