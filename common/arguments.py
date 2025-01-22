@@ -24,7 +24,7 @@ def parse_args():
                         help='checkpoint directory')
     parser.add_argument('-l', '--log', default='log/default', type=str, metavar='PATH',
                         help='log file directory')
-    parser.add_argument('-cf','--checkpoint-frequency', default=20, type=int, metavar='N',
+    parser.add_argument('-cf','--checkpoint-frequency', default=256, type=int, metavar='N',
                         help='create a checkpoint every N epochs')
     parser.add_argument('-r', '--resume', default='', type=str, metavar='FILENAME',
                         help='checkpoint to resume (file name)')
@@ -38,9 +38,9 @@ def parse_args():
 
 
     # Model arguments
-    parser.add_argument('-s', '--stride', default=1, type=int, metavar='N', help='chunk size to use during training')
-    parser.add_argument('-e', '--epochs', default=180, type=int, metavar='N', help='number of training epochs')
-    parser.add_argument('-b', '--batch-size', default=4, type=int, metavar='N', help='batch size in terms of predicted frames')
+    parser.add_argument('-s', '--stride', default=243, type=int, metavar='N', help='chunk size to use during training')
+    parser.add_argument('-e', '--epochs', default=256, type=int, metavar='N', help='number of training epochs')
+    parser.add_argument('-b', '--batch-size', default=2, type=int, metavar='N', help='batch size in terms of predicted frames')
     parser.add_argument('-drop', '--dropout', default=0., type=float, metavar='P', help='dropout probability')
     parser.add_argument('-lr', '--learning-rate', default=0.00004, type=float, metavar='LR', help='initial learning rate')
     parser.add_argument('-lrd', '--lr-decay', default=0.99, type=float, metavar='LR', help='learning rate decay per epoch')
