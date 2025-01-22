@@ -93,7 +93,7 @@ def main():
         args.checkpoint = args.log+'_'+TIMESTAMP
     try:
         # Create checkpoint directory if it does not exist
-        os.makedirs(args.checkpoint)
+        os.makedirs('checkpoint/' + args.checkpoint)
     except OSError as e:
         if e.errno != errno.EEXIST:
             raise RuntimeError('Unable to create checkpoint directory:', args.checkpoint)
