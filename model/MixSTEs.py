@@ -742,7 +742,7 @@ class  MixSTE3(nn.Module):
         self.TTEblocks = nn.ModuleList([
             BiasBlock(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, comb=False, changedim=False, currentdim=i+1, depth=depth, attention=TGAttention)
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, comb=False, changedim=False, currentdim=i+1, depth=depth)
             for i in range(depth)])
 
         self.Spatial_norm = norm_layer(embed_dim_ratio)
