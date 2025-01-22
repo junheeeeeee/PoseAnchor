@@ -472,7 +472,7 @@ def main():
 
                 gt2d = project_to_2d_linear(inputs_3d + inputs_traj, cameras_train)
                 pred_traj, _ = get_root(predicted_3d_pos, gt2d, cameras_train)
-                predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + pred_traj, cameras_train)
+                predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + inputs_traj, cameras_train)
 
 
                 # inputs_3d[:, :, :1] = inputs_traj
