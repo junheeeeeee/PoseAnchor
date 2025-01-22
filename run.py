@@ -688,6 +688,7 @@ def main():
             # Save checkpoint if necessary
             if epoch % args.checkpoint_frequency == 0 and rank == 0:
                 chk_path = os.path.join(args.checkpoint, 'epoch_{}.bin'.format(epoch))
+                chk_path = "checkpoint/" + chk_path
                 print('Saving checkpoint to', chk_path)
 
                 torch.save({
@@ -703,6 +704,7 @@ def main():
 
             #### save best checkpoint
             best_chk_path = os.path.join(args.checkpoint, 'best_epoch.bin'.format(epoch))
+            best_chk_path = "checkpoint/" + best_chk_path
             # min_loss = 41.65
             if rank == 0:
                 if losses_3d_valid[-1] * 1000 < min_loss:
