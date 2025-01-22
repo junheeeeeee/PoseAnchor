@@ -54,6 +54,8 @@ def parse_args():
     parser.add_argument('-beta', default=2, type=float, help='used for wf_mpjpe')
     parser.add_argument('--postrf', action='store_true', help='use the post refine module')
     parser.add_argument('--ftpostrf', action='store_true', help='For fintune to post refine module')
+    parser.add_argument('--loss2d', default=0, type=int, help='use 2d loss')
+    parser.add_argument('--lossroot', default=0, type=int, help='use root loss')
     # parser.add_argument('-no-tta', '--no-test-time-augmentation', dest='test_time_augmentation', action='store_false',
     #                     help='disable test-time flipping')
     # parser.add_argument('-arc', '--architecture', default='3,3,3', type=str, metavar='LAYERS', help='filter widths separated by comma')

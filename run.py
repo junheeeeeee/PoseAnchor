@@ -492,8 +492,8 @@ def main():
                     w_mpjpe = torch.tensor([1, 1, 2.5, 2.5, 1, 2.5, 2.5, 1, 1.5, 1.5, 4, 4, 1.5, 4, 4]).cuda()
 
                 b, f , _, _ = inputs_3d.shape
-                # loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
-                loss_3d_pos = mpjpe(inputs_3d.reshape(b,f, -1), predicted_3d_pos.reshape(b,f, -1))
+                loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
+                # loss_3d_pos = mpjpe(inputs_3d.reshape(b,f, -1), predicted_3d_pos.reshape(b,f, -1))
                 loss_2d_pos = mpjpe(gt2d, predicted_2d_pos)
                 inputs_2d_error =  mpjpe(gt2d, inputs_2d)
                 loss_resid = mpjpe(inputs_traj, pred_traj)
@@ -511,7 +511,7 @@ def main():
                 loss_diff = 0.5 * dif_seq + 2.0 * mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
                 
 
-                loss_total = loss_3d_pos + loss_diff #+ loss_2d_pos + loss_resid
+                loss_total = loss_3d_pos + loss_diff + loss_2d_pos * args.loss2d + loss_resid * args.lossroot
                 
                 loss_total.backward(loss_total.clone().detach())
 

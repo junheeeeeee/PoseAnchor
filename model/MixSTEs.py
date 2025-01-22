@@ -117,7 +117,6 @@ class Attention(nn.Module):
         
         # attn = self.quantize(self.sig(attn))
         attn = self.attn_drop(attn)
-        print(attn.shape)
         if self.comb==True:
             x = (attn @ v.transpose(-2, -1)).transpose(-2, -1)
             # print(x.shape)
