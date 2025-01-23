@@ -305,19 +305,17 @@ def main():
     if args.resume or args.evaluate:
         chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
         chk_filename = "checkpoint/" + chk_filename
-        # chk_filename = args.resume or args.evaluate
-        if rank == 0:
-            print('Loading checkpoint', chk_filename)
         checkpoint = torch.load(chk_filename, map_location=lambda storage, loc: storage)
-        if rank == 0:
-            print('This model was trained for {} epochs'.format(checkpoint['epoch']))
+        # chk_filename = args.resume or args.evaluate
         model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
         wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else wandb_id
         min_loss = checkpoint['min_loss'] if 'min_loss' in checkpoint else min_loss
-        print('Best validation loss so far:', min_loss)
-        print('wandb_id:', wandb_id)
-
+        if rank == 0:
+            print('Loading checkpoint', chk_filename)
+            print('This model was trained for {} epochs'.format(checkpoint['epoch']))
+            print('Best validation loss so far:', min_loss)
+            print('wandb_id:', wandb_id)
     if not args.nolog and rank == 0:
         
                 
