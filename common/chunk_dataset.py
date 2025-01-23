@@ -100,9 +100,11 @@ class ChunkedDataset_Seq(Dataset):
         # 2D poses 추출
         # ----------------------------
         seq_2d = self.poses_2d[seq_i]
-        random_shift = 0
-        start_2d = start_3d + random_shift  # pad, causal_shift 반영하려면 추가할 수도 있음
-        end_2d   = end_3d + random_shift
+        random_shift = np.random.randint(-40, 40)
+        start_3d += random_shift
+        end_3d += random_shift
+        start_2d = start_3d  # pad, causal_shift 반영하려면 추가할 수도 있음
+        end_2d   = end_3d
 
         low_2d  = max(start_2d, 0)
         high_2d = min(end_2d, seq_2d.shape[0])
