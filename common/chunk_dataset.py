@@ -62,6 +62,7 @@ class ChunkedDataset_Seq(Dataset):
         self.kps_right = kps_right
         self.joints_left = joints_left
         self.joints_right = joints_right
+        self.stride = stride
 
         pairs = [] # (seq_idx, start_frame, end_frame, flip) tuples
         for i in range(len(poses_2d)):
@@ -100,7 +101,7 @@ class ChunkedDataset_Seq(Dataset):
         # 2D poses 추출
         # ----------------------------
         seq_2d = self.poses_2d[seq_i]
-        random_shift = np.random.randint(-40, 40)
+        random_shift = np.random.randint(-self.stride / 2, self.stride / 2)
         start_3d += random_shift
         end_3d += random_shift
         start_2d = start_3d  # pad, causal_shift 반영하려면 추가할 수도 있음
