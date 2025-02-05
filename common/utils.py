@@ -72,6 +72,13 @@ def load_pretrained_weights(model, checkpoint):
     # model.state_dict(model_dict).requires_grad = False
     return model
 
+def differentiable_pinv(A):
+    # A shape: (..., M, N)
+    U, S, Vh = torch.linalg.svd(A, full_matrices=False)
+    # S: (..., min(M,N))
+    S_inv = torch.where(S > 1e-6, 1/S, torch.zeros_like(S))  # 안정성 처리
+    A_pinv = Vh.transpose(-2, -1) @ torch.diag_embed(S_inv) @ U.transpose(-2, -1)
+    return A_pinv
 
 def get_root(p3d, p2d, camera):
     """
@@ -119,13 +126,151 @@ def get_root(p3d, p2d, camera):
     x = torch.matmul(A_pinv, d).squeeze(-1)
     residuals = (A @ x.unsqueeze(-1)).squeeze(-1) - d.squeeze()
 
+    thresholds = torch.tensor(170 / 1000, device=residuals.device)
+    mask = residuals.abs() > thresholds
+    d[mask] = 0
+    A[mask.unsqueeze(-1).expand_as(A)] = 0
+
+    A_pinv = differentiable_pinv(A)
+    x = torch.matmul(A_pinv, d).squeeze(-1)
+
+
+    # alpha = 10  # 가중치 조정 파라미터
+    # weights = 1.0 / (1.0 + alpha * residuals.pow(2))
+
+    # # 3. A와 d에 가중치 적용
+    # W = weights.unsqueeze(-1)  # 가중치 형태 변환
+    # A_weighted = A * W.expand_as(A)
+    # d_weighted = d * W
+
+    # # 4. Weighted Least Squares 계산
+    # A_t = A_weighted.transpose(-2, -1)
+    # A_pinv = torch.linalg.pinv(A_t @ A_weighted)
+    # x = torch.matmul(A_pinv @ A_t, d_weighted).squeeze(-1)
+
     x = x.view(b, t, 3)
     residuals = residuals.view(b, t, N , 2)
 
     return x.unsqueeze(2), residuals
 
 
+def refine_pose(p3d, p2d, camera, iterations=3, alpha=10):
+    """
+    Refine 3D joint coordinates using accurate gradient calculation based on residuals
+    from get_root.
 
+    Args:
+        p3d (torch.Tensor): Initial 3D joint coordinates of shape (B, t, N, 3).
+        p2d (torch.Tensor): 2D joint projections of shape (B, t, N, 2).
+        camera (torch.Tensor): Camera intrinsic parameters of shape (B, 4).
+        iterations (int): Number of refinement iterations.
+        alpha (float): Learning rate for updating 3D and 2D coordinates.
+
+    Returns:
+        refined_p3d (torch.Tensor): Refined 3D joint coordinates of shape (B, t, N, 3).
+        pred_root (torch.Tensor): Predicted root position of shape (B, t, 1, 3).
+        refined_p2d (torch.Tensor): Refined 2D joint projections of shape (B, t, N, 2).
+    """
+
+    for _ in range(iterations):
+        # Forward pass: Calculate residuals and root position
+        pred_root, residuals = get_root(p3d, p2d, camera)
+
+        # Compute A^T * residuals (gradient w.r.t. x)
+        B_t, _, N, _ = residuals.shape  # Extract batch and temporal dimensions
+        residuals_flat = residuals.view(B_t * N, -1)  # Flatten for batched matrix operations
+
+        # Backpropagation through A and d
+        grad_p3d = compute_grad_p3d(residuals_flat, p3d, camera)
+        grad_p2d = compute_grad_p2d(residuals_flat, p2d, camera)
+
+        # Update p3d and p2d using computed gradients
+        p3d = p3d - alpha * grad_p3d
+        # p2d = p2d - alpha * grad_p2d
+
+    return p3d, pred_root, p2d
+
+def compute_grad_p3d(residuals_flat, p3d, camera):
+    """
+    Compute the gradient of the loss w.r.t. p3d using residuals.
+
+    Args:
+        residuals_flat (torch.Tensor): Flattened residuals of shape (B * t * N, 2).
+        p3d (torch.Tensor): 3D joint coordinates of shape (B, t, N, 3).
+        camera (torch.Tensor): Camera intrinsic parameters of shape (B, 4).
+
+    Returns:
+        grad_p3d (torch.Tensor): Gradient of the loss w.r.t. p3d of shape (B, t, N, 3).
+    """
+    B, t, N, _ = p3d.shape
+
+    # Reshape residuals back to (B, t, N, 2)
+    residuals = residuals_flat.view(B, t, N, 2)
+
+    # Extract camera parameters and expand dimensions
+    fx = camera[..., 0].unsqueeze(-1).unsqueeze(-1).repeat(1, t, N)
+    fy = camera[..., 1].unsqueeze(-1).unsqueeze(-1).repeat(1, t, N)
+
+    # Compute gradient for p3d
+    grad_p3d = torch.zeros_like(p3d)
+    grad_p3d[..., 0] = fx * residuals[..., 0]
+    grad_p3d[..., 1] = fy * residuals[..., 1]
+    grad_p3d[..., 2] = -(fx * residuals[..., 0] + fy * residuals[..., 1])
+
+    return grad_p3d
+
+
+def compute_grad_p2d(residuals_flat, p2d, camera):
+    """
+    Compute the gradient of the loss w.r.t. p2d using residuals.
+
+    Args:
+        residuals_flat (torch.Tensor): Flattened residuals of shape (B * t * N, 2).
+        p2d (torch.Tensor): 2D joint projections of shape (B, t, N, 2).
+        camera (torch.Tensor): Camera intrinsic parameters of shape (B, 4).
+
+    Returns:
+        grad_p2d (torch.Tensor): Gradient of the loss w.r.t. p2d of shape (B, t, N, 2).
+    """
+    B, t, N, _ = p2d.shape
+
+    # Reshape residuals back to (B, t, N, 2)
+    residuals = residuals_flat.view(B, t, N, 2)
+
+    # Extract camera parameters and expand dimensions
+    fx = camera[..., 0].unsqueeze(-1).unsqueeze(-1).repeat(1, t, N)
+    fy = camera[..., 1].unsqueeze(-1).unsqueeze(-1).repeat(1, t, N)
+
+    # Compute gradient for p2d
+    grad_p2d = torch.zeros_like(p2d)
+    grad_p2d[..., 0] = -fx * residuals[..., 0]
+    grad_p2d[..., 1] = -fy * residuals[..., 1]
+
+    return grad_p2d
+
+
+def project_to_2d_linear(X, camera_params):
+    """
+    Project 3D points to 2D using only linear parameters (focal length and principal point).
+    
+    Arguments:
+    X -- 3D points in *camera space* to transform (N, *, 3)
+    camera_params -- intrinsic parameteres (N, 2+2+3+2=9)
+    """
+    assert X.shape[-1] == 3
+    assert len(camera_params.shape) == 2
+    assert camera_params.shape[-1] == 9
+    # assert X.shape[0] == camera_params.shape[0]
+    
+    while len(camera_params.shape) < len(X.shape):
+        camera_params = camera_params.unsqueeze(1)
+        
+    f = camera_params[..., :2]
+    c = camera_params[..., 2:4]
+    
+    XX = torch.clamp(X[..., :2] / X[..., 2:], min=-1, max=1)
+    
+    return f*XX + c
 
 def get_residuals(p3d, p2d, root,camera):
     # Extract camera parameters

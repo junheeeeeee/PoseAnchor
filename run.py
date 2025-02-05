@@ -67,7 +67,7 @@ elif args.evaluate == '':
     
     description = "Train!"
 def main():
-    
+
     dist.init_process_group("nccl")
     rank = dist.get_rank()
     
@@ -471,8 +471,9 @@ def main():
                 predicted_3d_pos = model_pos_train(inputs_2d)
 
                 gt2d = project_to_2d_linear(inputs_3d + inputs_traj, cameras_train)
-                pred_traj, _ = get_root(predicted_3d_pos, gt2d, cameras_train)
-                predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + inputs_traj, cameras_train)
+                pred_traj, _ = get_root(predicted_3d_pos, inputs_2d, cameras_train)
+                predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + pred_traj, cameras_train)
+                # predicted_3d_pos ,pred_traj, predicted_2d_pos = refine_pose(predicted_3d_pos, inputs_2d, cameras_train, iterations=3)
 
 
                 # inputs_3d[:, :, :1] = inputs_traj
@@ -525,7 +526,7 @@ def main():
                 batch_time.update(time() - end)
                 end = time()
                 mpj.update(loss_mpj.item() * 1000, inputs_3d.shape[0])
-                mpj_2d.update(loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 100, inputs_3d.shape[0])
+                mpj_2d.update(loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 1000, inputs_3d.shape[0])
                 root.update(loss_resid.item() * 1000, inputs_3d.shape[0])
                 if rank == 0:
                     bar.suffix = '({batch}/{size}) Batch: {bt:.3f}s | Elapsed Time: {ttl:} | ETA: {eta:} ' \
@@ -585,7 +586,7 @@ def main():
                                 predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
                                 # print(predicted_3d_pos[i,0,0,0], predicted_3d_pos_flip[i,0,0,0])
                             # predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1, keepdim=True)
-
+                            # predicted_3d_pos, pred_traj, predicted_2d_pos = refine_pose(predicted_3d_pos, inputs_2d, cam, iterations=3)
                             # del inputs_2d, inputs_2d_flip
                             # torch.cuda.empty_cache()
 
@@ -827,6 +828,7 @@ def main():
                 for i in range(predicted_3d_pos.shape[0]):
                     predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
                 predicted_3d_pos[:, :, 0] = 0
+                # predicted_3d_pos, pred_root, predicted_2d_pos = refine_pose(predicted_3d_pos, inputs_2d, cam)
                 pred_root, _ = get_root(predicted_3d_pos, inputs_2d, cam)
 
                 if return_predictions:

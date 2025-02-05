@@ -330,33 +330,11 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     epoch_loss_3d_pos = 0
     epoch_loss_3d_pos_procrustes = 0
     epoch_loss_3d_pos_scale = 0
+    epoch_mrpe = 0
     epoch_loss_3d_vel = 0
     with torch.no_grad():
-        if newmodel is not None:
-            print('Loading comparison model')
-            model_eval = newmodel
-            chk_file_path = '/mnt/data3/home/zjl/workspace/3dpose/PoseFormer/checkpoint/train_pf_00/epoch_60.bin'
-            print('Loading evaluate checkpoint of comparison model', chk_file_path)
-            checkpoint = torch.load(chk_file_path, map_location=lambda storage, loc: storage)
-            model_eval.load_state_dict(checkpoint['model_pos'], strict=False)
-            model_eval.eval()
-        else:
-            model_eval = model_pos
-            if not use_trajectory_model:
-                # load best checkpoint
-                if args.evaluate == '':
-                    chk_file_path = os.path.join("checkpoint/", args.checkpoint, 'best_epoch.bin')
-                    print('Loading best checkpoint', chk_file_path)
-                elif args.evaluate != '':
-                    chk_file_path = os.path.join("checkpoint/", args.checkpoint, args.evaluate)
-                    print('Loading evaluate checkpoint', chk_file_path)
-                checkpoint = torch.load(chk_file_path, map_location=lambda storage, loc: storage)
-                print('This model was trained for {} epochs'.format(checkpoint['epoch']))
-                # model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
-                model_eval.load_state_dict(checkpoint['model_pos'], strict=False)
-                model_eval.eval()
-        # else:
-            # model_traj.eval()
+        model_eval = model_pos
+        model_eval.eval()
         N = 0
         for cam, batch, batch_2d in test_generator.next_epoch():
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -410,7 +388,25 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             for i in range(predicted_3d_pos.shape[0]):
                 predicted_3d_pos[i,:,:,:] = (predicted_3d_pos[i,:,:,:] + predicted_3d_pos_flip[i,:,:,:])/2
             predicted_3d_pos[:, :, 0] = 0
-            pred_root, _ = get_root(predicted_3d_pos, inputs_2d, cam)
+            pred_root, residuals = get_root(predicted_3d_pos, inputs_2d, cam)
+            
+            # gt_2d = project_to_2d_linear(inputs_3d + inputs_traj, cam)
+            # pred_2d = project_to_2d_linear(predicted_3d_pos + pred_root, cam)
+            # best_2d = project_to_2d_linear(predicted_3d_pos + inputs_traj, cam)
+            # predicted_3d_pos, pred_root, pred_2d = refine_pose(predicted_3d_pos, pred_2d, cam)
+            # torch.set_printoptions(sci_mode=False, precision=6)
+            # print((gt_2d[2,0] - pred_2d[2,0]) * 1000)
+            # print(residuals[2,0] * 1000)
+            # print((inputs_traj[2,0] - pred_root[2,0]) * 1000)
+
+            # print(f"{'MPJPE:':<10} {mpjpe(predicted_3d_pos, inputs_3d).item() * 1000:.2f}")
+            # print(f"{'MRPE:':<10} {mpjpe(pred_root, inputs_traj).item() * 1000:.2f}")
+            # print(f"{'Original:':<10} {mpjpe(inputs_2d, gt_2d).item() * 1000:.2f}")
+            # print(f"{'Refined:':<10} {mpjpe(pred_2d, gt_2d).item() * 1000 - mpjpe(inputs_2d, gt_2d).item() * 1000:.2f}")
+            # print(f"{'Best:':<10} {mpjpe(best_2d, gt_2d).item() * 1000 - mpjpe(inputs_2d, gt_2d).item() * 1000:.2f}")
+            # print(f"{'Changed:':<10} {mpjpe(inputs_2d, pred_2d).item() * 1000:.2f}")
+            # print('----------')
+            # exit()
 
             if return_predictions:
                 return predicted_3d_pos.squeeze().cpu().numpy()
@@ -418,7 +414,8 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
             error = mpjpe(predicted_3d_pos, inputs_3d)
 
-            epoch_loss_3d_pos_scale += inputs_3d.shape[0]*inputs_3d.shape[1] * mpjpe(pred_root, inputs_traj).item()
+            epoch_loss_3d_pos_scale += inputs_3d.shape[0]*inputs_3d.shape[1] * mpjpe(predicted_3d_pos + pred_root, inputs_3d + inputs_traj).item()
+            epoch_mrpe += inputs_3d.shape[0]*inputs_3d.shape[1] * mpjpe(pred_root, inputs_traj).item()
 
             epoch_loss_3d_pos += inputs_3d.shape[0]*inputs_3d.shape[1] * error.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
@@ -437,15 +434,17 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     e1 = (epoch_loss_3d_pos / N)*1000
     e2 = (epoch_loss_3d_pos_procrustes / N)*1000
     e3 = (epoch_loss_3d_pos_scale / N)*1000
+    e4 = (epoch_mrpe / N)*1000
     ev = (epoch_loss_3d_vel / N)*1000
     print('Test time augmentation:', test_generator.augment_enabled())
-    print('Protocol #1 Error (MPJPE):', e1, 'mm')
-    print('Protocol #2 Error (MRPE):', e3, 'mm')
-    print('Protocol #3 Error (P-MPJPE):', e2, 'mm')
-    print('Velocity Error (MPJVE):', ev, 'mm')
+    print(f'Protocol #1 Error (MPJPE)    :', f'{e1:.1f}', 'mm')
+    print(f'Protocol #2 Error (Abs-MPJPE):', f'{e3:.1f}', 'mm')
+    print(f'Protocol #3 Error (MRPE)     :', f'{e4:.1f}', 'mm')
+    print(f'Protocol #4 Error (P-MPJPE)  :', f'{e2:.1f}', 'mm')
+    print(f'Velocity    Error (MPJVE)    :', f'{ev:.2f}', 'mm')
     print('----------')
 
-    return e1, e2, e3, ev
+    return e1, e2, e3, e4, ev
 
 
 
@@ -503,10 +502,13 @@ def run_evaluation(actions, action_filter=None):
     errors_p1 = []
     errors_p2 = []
     errors_p3 = []
+    errors_p4 = []
     errors_vel = []
     # joints_errs_list=[]
 
     for action_key in actions.keys():
+        # action_key = 'SittingDown' # 제일 루트 안 좋은 예
+        # action_key = 'Greeting' # p2d가 제일 안 좋은 예
         if action_filter is not None:
             found = False
             for a in action_filter:
@@ -521,19 +523,21 @@ def run_evaluation(actions, action_filter=None):
                                 pad=pad, causal_shift=causal_shift, augment=args.test_time_augmentation,
                                 kps_left=kps_left, kps_right=kps_right, joints_left=joints_left,
                                 joints_right=joints_right)
-        e1, e2, e3, ev = evaluate(gen, action_key)
+        e1, e2, e3, e4, ev = evaluate(gen, action_key)
         
         # joints_errs_list.append(joints_errs)
 
         errors_p1.append(e1)
         errors_p2.append(e2)
         errors_p3.append(e3)
+        errors_p4.append(e4)
         errors_vel.append(ev)
     
-    print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
-    print('Protocol #2 (A-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
-    print('Protocol #3 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
-    print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
+    print('Protocol #1     (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
+    print('Protocol #2 (Abs-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
+    print('Protocol #3      (MRPE) action-wise average:', round(np.mean(errors_p4), 1), 'mm')
+    print('Protocol #4   (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
+    print('Velocity        (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
 
 
     # joints_errs_np = np.array(joints_errs_list).reshape(-1, 17)
