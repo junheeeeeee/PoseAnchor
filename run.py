@@ -678,9 +678,8 @@ def main():
                     wandb.log({"3d_train": losses_3d_train[-1] * 1000}, epoch+1, commit=True)
             # Decay learning rate exponentially
             lr *= lr_decay
-            if epoch >= 30:
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] *= lr_decay
+            for param_group in optimizer.param_groups:
+                param_group['lr'] *= lr_decay
             epoch += 1
 
             # Decay BatchNorm momentum
