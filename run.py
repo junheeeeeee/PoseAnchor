@@ -25,6 +25,7 @@ from copy import deepcopy
 from common.camera import *
 import collections
 from model.MixSTEs import *
+import model.stcformer import Model as stcformer
 from common.skeleton import *
 
 from common.loss import *
@@ -266,6 +267,9 @@ def main():
     if args.model == 'MotionAGFormer':
         model_pos_train = load_model(args.model, args)
         model_pos = load_model(args.model, args)
+    elif args.model == 'STCFormer':
+        model_pos_train = stcformer()
+        model_pos = stcformer()
     else:
         try:
             model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
