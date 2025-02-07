@@ -35,6 +35,7 @@ from time import time
 from common.utils import *
 from common.logging import Logger
 from model.load_model import load_model
+from model.stcformer import STCFormer
 # from model.PoseMamba import PoseMamba
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
@@ -226,8 +227,11 @@ num_joints = keypoints_metadata['num_joints']
 
 #########################################PoseTransformer
 if args.model == 'MotionAGFormer':
-        model_pos_train = load_model(args.model, args)
-        model_pos = load_model(args.model, args)
+    model_pos_train = load_model(args.model, args)
+    model_pos = load_model(args.model, args)
+elif args.model == 'STCFormer':
+    model_pos_train = STCFormer()
+    model_pos = STCFormer()
 else:
     try:
         model_pos_train =  eval(args.model)(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=args.cs, depth=args.dep,
@@ -336,7 +340,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
         model_eval = model_pos
         model_eval.eval()
         N = 0
-        for cam, batch, batch_2d in test_generator.next_epoch():
+        for cam, batch, batch_2d, _ in test_generator.next_epoch():
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
             inputs_3d = torch.from_numpy(batch.astype('float32'))
             cam = torch.from_numpy(cam.astype('float32'))
