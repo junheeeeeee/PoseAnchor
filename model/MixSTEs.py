@@ -23,6 +23,46 @@ from model.rela import RectifiedLinearAttention
 from model.routing_transformer import KmeansAttention
 from model.linearattention import LinearMultiheadAttention
 
+import torch
+import torch.nn as nn
+
+class HybridArithmeticLayer(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., changedim=False, currentdim=0, depth=0):
+        """
+        nn.Linear를 활용하여 Signed Logarithm 기반 곱셈과 나눗셈을 동시에 처리.
+        Args:
+            input_dim (int): 입력 차원.
+            output_dim (int): 출력 차원.
+            epsilon (float): 수치적 안정성을 위한 작은 값.
+        """
+        super(HybridArithmeticLayer, self).__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.linear = nn.Linear(in_features, out_features)
+        self.logW = nn.Parameter(torch.zeros(in_features, out_features))
+
+        self.act = act_layer()
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        # 선형 변환 수행 (일반 선형)
+        x_l = self.linear(x)
+        x_l = self.act(x_l)
+        x_l = self.drop(x_l)
+
+        # 로그 기반 변환 수행
+        sign = torch.sign(x)
+        sign = torch.where(sign == 0, torch.tensor(1.0, device=x.device), sign)
+        x = (abs(x) + 1) * sign
+        x = torch.log(x.to(torch.complex64))   # 부호와 로그 변환
+        x = torch.matmul(x, self.logW.to(torch.complex64)) # 로그 변환된 입력에 가중치를 곱하고 편향을 더함
+        x = torch.exp(x)  # 로그의 역함수인 지수 변환
+        x = x.real.to(torch.float32) + x.imag.to(torch.float32) * 0
+        sign_exp = torch.sign(x)
+        x = (abs(x) - 1) * sign_exp
+        x = self.drop(x) + x_l
+        return x
+
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., changedim=False, currentdim=0, depth=0):
         super().__init__()
@@ -420,6 +460,49 @@ class Block(nn.Module):
             x = rearrange(x, 'b c t -> b t c')
         return x
 
+class BlockHy(nn.Module):
+
+    def __init__(self, dim, num_heads, mlp_ratio=4., attention=Attention, qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, comb=False, changedim=False, currentdim=0, depth=0, vis=False):
+        super().__init__()
+
+        self.changedim = changedim
+        self.currentdim = currentdim
+        self.depth = depth
+        if self.changedim:
+            assert self.depth>0
+
+        self.norm1 = norm_layer(dim)
+        self.attn = attention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, comb=comb, vis=vis)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = HybridArithmeticLayer(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        
+        if self.changedim and self.currentdim < self.depth//2:
+            self.reduction = nn.Conv1d(dim, dim//2, kernel_size=1)
+            # self.reduction = nn.Linear(dim, dim//2)
+        elif self.changedim and depth > self.currentdim > self.depth//2:
+            self.improve = nn.Conv1d(dim, dim*2, kernel_size=1)
+            # self.improve = nn.Linear(dim, dim*2)
+        self.vis = vis
+
+    def forward(self, x, vis=False):
+        x = x + self.drop_path(self.attn(self.norm1(x), vis=vis))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        
+        if self.changedim and self.currentdim < self.depth//2:
+            x = rearrange(x, 'b t c -> b c t')
+            x = self.reduction(x)
+            x = rearrange(x, 'b c t -> b t c')
+        elif self.changedim and self.depth > self.currentdim > self.depth//2:
+            x = rearrange(x, 'b t c -> b c t')
+            x = self.improve(x)
+            x = rearrange(x, 'b c t -> b t c')
+        return x
+
 class BiasBlock(nn.Module):
 
     def __init__(self, dim, num_heads, mlp_ratio=4., attention=BiasAttention, qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
@@ -734,28 +817,26 @@ class  MixSTE3(nn.Module):
 
         self.STEblocks = nn.ModuleList([
             # Block: Attention Block
-            BiasBlock(
+            BlockHy(
                 dim=embed_dim_ratio, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
             for i in range(depth)])
 
         self.TTEblocks = nn.ModuleList([
-            BiasBlock(
+            BlockHy(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, comb=False, changedim=False, currentdim=i+1, depth=depth)
             for i in range(depth)])
 
         self.Spatial_norm = norm_layer(embed_dim_ratio)
         self.Temporal_norm = norm_layer(embed_dim)
-        self.pose_bias = nn.Parameter(torch.zeros(num_joints, num_joints))
-        self.frame_bias = nn.Parameter(torch.zeros(num_frame, num_frame))
 
         ####### A easy way to implement weighted mean
         # self.weighted_mean = torch.nn.Conv1d(in_channels=num_frame, out_channels=num_frame, kernel_size=1)
 
         self.head = nn.Sequential(
             nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim , 3),
+            HybridArithmeticLayer(in_features = embed_dim , out_features = 3),
         )
         # self.head = nn.Sequential(OrderedDict([
         #     ('act', nn.Tanh()),
@@ -776,7 +857,7 @@ class  MixSTE3(nn.Module):
         x = self.pos_drop(x)
 
         blk = self.STEblocks[0]
-        x = blk(x, self.pose_bias)
+        x = blk(x)
         # x = blk(x, vis=True)
 
         x = self.Spatial_norm(x)
@@ -789,7 +870,7 @@ class  MixSTE3(nn.Module):
         x += self.Temporal_pos_embed
         x = self.pos_drop(x)
         blk = self.TTEblocks[0]
-        x = blk(x, self.frame_bias)
+        x = blk(x)
         # x = blk(x, vis=True)
         # exit()
 
@@ -808,7 +889,7 @@ class  MixSTE3(nn.Module):
             # x = self.pos_drop(x)
             # if i==7:
             #     x = steblock(x, vis=True)
-            x = steblock(x, self.pose_bias)
+            x = steblock(x)
             x = self.Spatial_norm(x)
             x = rearrange(x, '(b f) n cw -> (b n) f cw', f=f)
 
@@ -817,7 +898,7 @@ class  MixSTE3(nn.Module):
             # if i==7:
             #     x = tteblock(x, vis=True)
             #     exit()
-            x = tteblock(x, self.frame_bias)
+            x = tteblock(x)
             x = self.Temporal_norm(x)
             x = rearrange(x, '(b n) f cw -> b f n cw', n=n)
         

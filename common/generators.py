@@ -187,7 +187,7 @@ class UnchunkedGenerator_Seq:
     joints_left and joints_right -- list of left/right 3D joints if flipping is enabled
     """
     
-    def __init__(self, cameras, poses_3d, poses_2d, pad=0, causal_shift=0,
+    def __init__(self, cameras, poses_3d, poses_2d, actions = None, pad=0, causal_shift=0,
                  augment=False, kps_left=None, kps_right=None, joints_left=None, joints_right=None):
         assert poses_3d is None or len(poses_3d) == len(poses_2d)
         assert cameras is None or len(cameras) == len(poses_2d)
@@ -203,6 +203,7 @@ class UnchunkedGenerator_Seq:
         self.cameras = [] if cameras is None else cameras
         self.poses_3d = [] if poses_3d is None else poses_3d
         self.poses_2d = poses_2d
+        self.actions = [] if actions is None else actions
         
     def num_frames(self):
         count = 0
@@ -217,10 +218,11 @@ class UnchunkedGenerator_Seq:
         self.augment = augment
     
     def next_epoch(self):
-        for seq_cam, seq_3d, seq_2d in zip_longest(self.cameras, self.poses_3d, self.poses_2d):
+        for seq_cam, seq_3d, seq_2d, seq_act in zip_longest(self.cameras, self.poses_3d, self.poses_2d, self.actions):
             batch_cam = None if seq_cam is None else np.expand_dims(seq_cam, axis=0)
             batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
             batch_2d = None if seq_2d is None else np.expand_dims(seq_2d, axis=0)
+            seq_act = None if seq_act is None else seq_act
             # batch_2d = np.expand_dims(np.pad(seq_2d,
             #                 ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
             #                 'edge'), axis=0)
@@ -240,7 +242,7 @@ class UnchunkedGenerator_Seq:
                 batch_2d[1, :, :, 0] *= -1
                 batch_2d[1, :, self.kps_left + self.kps_right] = batch_2d[1, :, self.kps_right + self.kps_left]
             # print(batch_2d.shape)
-            yield batch_cam, batch_3d, batch_2d
+            yield batch_cam, batch_3d, batch_2d, seq_act
 
 class UnchunkedGenerator_Seq2Seq:
     """

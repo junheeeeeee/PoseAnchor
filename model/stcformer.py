@@ -12,34 +12,6 @@ import scipy.sparse as sp
 from timm.models.layers import DropPath
 
 
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        layers, d_hid, frames = 6, 512, 243
-        num_joints_in, num_joints_out = 17, 17
-
-        # layers, length,d_hid = layers, frames, d_hid
-        # num_joints_in, num_joints_out = 17,17
-
-        self.pose_emb = nn.Linear(2, d_hid, bias=False)
-        self.gelu = nn.GELU()
-        self.stcformer = STCFormer(layers, frames, num_joints_in, d_hid)
-        self.regress_head = nn.Linear(d_hid, 3, bias=False)
-
-    def forward(self, x):
-        # b, t, s, c = x.shape  #batch,frame,joint,coordinate
-        # dimension tranfer
-        x = self.pose_emb(x)
-        x = self.gelu(x)
-        # spatio-temporal correlation
-        x = self.stcformer(x)
-        # regression head
-        x = self.regress_head(x)
-
-        return x
-
-
 class STC_ATTENTION(nn.Module):
     def __init__(self, d_time, d_joint, d_coor, head=8):
         super().__init__()
@@ -57,7 +29,7 @@ class STC_ATTENTION(nn.Module):
         # sep1
         # print(d_coor)
         self.emb = nn.Embedding(5, d_coor//head//2)
-        self.part = torch.tensor([0, 1, 1, 1, 2, 2, 2, 0, 0, 0, 0, 3, 3, 3, 4, 4, 4]).long().cuda()
+        self.part = torch.tensor([0, 1, 1, 1, 2, 2, 2, 0, 0, 0, 0, 3, 3, 3, 4, 4, 4]).long()
 
         # sep2
         self.sep2_t = nn.Conv2d(d_coor // 2, d_coor // 2, kernel_size=3, stride=1, padding=1, groups=d_coor // 2)
@@ -106,8 +78,8 @@ class STC_ATTENTION(nn.Module):
         # v_s = rearrange(v_s, 'b c t s -> (b t ) s c')
         # v_t = rearrange(v_t, 'b c t s -> (b s ) t c')
         # print(lep_s.shape)
-        sep_s = self.emb(self.part).unsqueeze(0)  # 1,s,c//2//h
-        sep_t = self.emb(self.part).unsqueeze(0).unsqueeze(0).unsqueeze(0)  # 1,1,1,s,c//2//h
+        sep_s = self.emb(self.part.to(input.device)).unsqueeze(0)  # 1,s,c//2//h
+        sep_t = self.emb(self.part.to(input.device)).unsqueeze(0).unsqueeze(0).unsqueeze(0)  # 1,1,1,s,c//2//h
 
         # MSA
         v_s = rearrange(v_s, 'b (h c) t s   -> (b h t) s c ', h=self.head)  # b*h*t,s,c//2//h
@@ -169,31 +141,42 @@ class Mlp(nn.Module):
 
 
 class STCFormer(nn.Module):
-    def __init__(self, num_block, d_time, d_joint, d_coor ):
+    def __init__(self):
         super(STCFormer, self).__init__()
 
-        self.num_block = num_block
-        self.d_time = d_time
-        self.d_joint = d_joint
-        self.d_coor = d_coor
+        self.num_block = 6
+        self.d_time = 243
+        self.d_joint = 17
+        self.d_coor = 512
 
-        self.stc_block = []
-        for l in range(self.num_block):
-            self.stc_block.append(STC_BLOCK(self.d_time, self.d_joint, self.d_coor))
-        self.stc_block = nn.ModuleList(self.stc_block)
+        self.Spatial_pos_embed = nn.Parameter(torch.zeros(1, 1, self.d_joint, self.d_coor))
+        self.Temporal_pos_embed = nn.Parameter(torch.zeros(1, self.d_time, 1, self.d_coor))
+
+        self.stc_block = nn.ModuleList(STC_BLOCK(self.d_time, self.d_joint, self.d_coor) for _ in range(self.num_block))
+        self.pose_emb = nn.Linear(2, self.d_coor, bias=False)
+        self.gelu = nn.GELU()
+        self.regress_head = nn.Linear(self.d_coor, 3, bias=False)
+
+
 
     def forward(self, input):
+        input = self.pose_emb(input)
+        input = self.gelu(input)
+        input = input + self.Spatial_pos_embed + self.Temporal_pos_embed
+
         # blocks layers
         for i in range(self.num_block):
             input = self.stc_block[i](input)
-        # exit()
+
+        input = self.regress_head(input)
+
         return input
 
 
 if __name__ == "__main__":
     # inputs = torch.rand(64, 351, 34)  # [btz, channel, T, H, W]
     # inputs = torch.rand(1, 64, 4, 112, 112) #[btz, channel, T, H, W]
-    net = Model(layers=6, d_hid=256, frames=27)
+    net = STCFormer(layers=6, d_hid=256, frames=27)
     inputs = torch.rand([1, 27, 17, 2])
     output = net(inputs)
     print(output.size())
