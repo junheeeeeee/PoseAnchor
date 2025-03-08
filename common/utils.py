@@ -74,11 +74,53 @@ def load_pretrained_weights(model, checkpoint):
 
 def differentiable_pinv(A):
     # A shape: (..., M, N)
-    U, S, Vh = torch.linalg.svd(A, full_matrices=False)
-    # S: (..., min(M,N))
-    S_inv = torch.where(S > 1e-6, 1/S, torch.zeros_like(S))  # 안정성 처리
-    A_pinv = Vh.transpose(-2, -1) @ torch.diag_embed(S_inv) @ U.transpose(-2, -1)
-    return A_pinv
+    A_T = A.transpose(-2, -1)
+    epsilon = 1e-6
+    I = torch.eye(A.shape[-1], device=A.device, dtype=A.dtype)
+    AtA = torch.matmul(A_T, A) + epsilon * I
+    pinv = torch.matmul(torch.inverse(AtA), A_T)
+    
+    return pinv
+
+def torrent_hyb(X, y, beta, tol=0.1):
+    """
+    Solve the Lasso problem using the hybrid method.
+    Args:
+        X (torch.Tensor): Input data of shape (n_samples, n_features).
+        y (torch.Tensor): Target values of shape (n_samples,).
+        tau (float): Threshold for the L1 regularization.
+        beta (float): Threshold for the active set.
+        max_iter (int): Maximum number of iterations.
+        tol (float): Tolerance for the stopping criterion.
+        eta (float): Learning rate for the gradient descent.
+    Returns:
+        w (torch.Tensor): Solution to the Lasso problem of shape (n_features,).
+    """ 
+    beta = torch.tensor(beta, device=X.device)
+    batch_size, n_samples, n_features = X.shape
+    w = torch.zeros(batch_size, n_features, 1).to(X.device)
+    active_set = torch.zeros(batch_size, n_samples,1, dtype=torch.bool).to(X.device)
+    residuals = y
+    scores = torch.norm(y, dim=-1).mean().item()
+    t = 0
+    while scores > tol:
+        X_active = X.clone()
+        y_active = y.clone()
+        X_active[active_set.expand_as(X_active)] = 0
+        y_active[active_set] = 0
+
+        w = torch.matmul(differentiable_pinv(X_active), y_active).squeeze(-1)
+        residuals = (X_active @ w.unsqueeze(-1)).squeeze(-1) - y_active.squeeze()
+        scores = torch.norm(residuals, dim=-1).mean()
+
+        # Select the top beta percent of the largest residuals
+        threshold = torch.quantile(residuals.abs(), 1 - beta, dim=-1, keepdim=True)
+        active_set = (residuals.abs() > threshold).view_as(residuals).unsqueeze(-1)
+        t += 1
+        if t > 100:
+            break
+
+    return w.squeeze(), residuals.squeeze()
 
 def get_root(p3d, p2d, camera):
     """
@@ -122,7 +164,7 @@ def get_root(p3d, p2d, camera):
     A = A.view(-1, N * 2, 3)  # Flatten batch and time
     d = d.view(-1, N * 2, 1)     # Flatten batch and time
 
-    A_pinv = torch.linalg.pinv(A)
+    A_pinv = differentiable_pinv(A)
     x = torch.matmul(A_pinv, d).squeeze(-1)
     residuals = (A @ x.unsqueeze(-1)).squeeze(-1) - d.squeeze()
 
@@ -133,26 +175,182 @@ def get_root(p3d, p2d, camera):
 
     A_pinv = differentiable_pinv(A)
     x = torch.matmul(A_pinv, d).squeeze(-1)
-
-
-    # alpha = 10  # 가중치 조정 파라미터
-    # weights = 1.0 / (1.0 + alpha * residuals.pow(2))
-
-    # # 3. A와 d에 가중치 적용
-    # W = weights.unsqueeze(-1)  # 가중치 형태 변환
-    # A_weighted = A * W.expand_as(A)
-    # d_weighted = d * W
-
-    # # 4. Weighted Least Squares 계산
-    # A_t = A_weighted.transpose(-2, -1)
-    # A_pinv = torch.linalg.pinv(A_t @ A_weighted)
-    # x = torch.matmul(A_pinv @ A_t, d_weighted).squeeze(-1)
-
+    residuals = (A @ x.unsqueeze(-1)).squeeze(-1) - d.squeeze()
+    
     x = x.view(b, t, 3)
     residuals = residuals.view(b, t, N , 2)
+    mask = mask.view(b, t, N, 2)
+    mask = mask.any(dim=-1)
 
+    return x.unsqueeze(2), mask
+
+def get_root_torrent(p3d, p2d, camera, beta=170 / 1000):
+    # Extract camera parameters
+    fx = camera[..., 0][:, None]
+    fy = camera[..., 1][:, None]
+    cx = camera[..., 2][:, None]
+    cy = camera[..., 3][:, None]
+
+    # Prepare A and b matrices
+    b, t, N = p3d.shape[0], p3d.shape[1], p3d.shape[2]
+    d = torch.zeros_like(p2d).reshape(b, t, -1)
+    A = torch.stack([d.clone(), d.clone(), d.clone()], dim=-1)
+    for i in range(N):
+        x = p2d[..., i, 0] - cx
+        y = p2d[..., i, 1] - cy
+
+        # Populate A matrix
+        A[..., 2 * i, 0] = -fx
+        A[..., 2 * i, 2] = x
+        A[..., 2 * i + 1, 1] = -fy
+        A[..., 2 * i + 1, 2] = y
+
+        # Populate b vector
+        d[..., 2 * i] = fx * p3d[..., i, 0] - x * p3d[..., i, 2]
+        d[..., 2 * i + 1] = fy * p3d[..., i, 1] - y * p3d[..., i, 2]
+
+    A = A.view(-1, N * 2, 3)  # Flatten batch and time
+    d = d.view(-1, N * 2, 1)     # Flatten batch and time
+
+    x, residuals = torrent_hyb(A, d, beta)
+    x = x.view(b, t, 3)
+    residuals = residuals.view(b, t, N , 2)
     return x.unsqueeze(2), residuals
 
+
+def LSR(p3d, p2d, camera):
+    """
+    Calculate the root position (X_r, Y_r, Z_r) from 3D joint coordinates, 2D joint projections, and camera parameters.
+
+    Args:
+        p3d (np.ndarray): 3D joint coordinates of shape (..., N, 3), where N is the number of joints.
+        p2d (np.ndarray): 2D joint projections of shape (..., N, 2).
+        camera (np.ndarray): Camera intrinsic parameters of shape (3, 4).
+
+    Returns:
+        root_position (torch.Tensor): Root position of shape (..., 3) containing (X_r, Y_r, Z_r).
+        residuals (torch.Tensor): Residuals of the least squares fit.
+    """
+    # Extract camera parameters
+    # Extract camera parameters
+    fx = camera[..., 0][:, None]
+    fy = camera[..., 1][:, None]
+    cx = camera[..., 2][:, None]
+    cy = camera[..., 3][:, None]
+
+    # Prepare A and b matrices
+    b, t, N = p3d.shape[0], p3d.shape[1], p3d.shape[2]
+    d = torch.zeros_like(p2d).reshape(b, t, -1)
+    A = torch.stack([d.clone(), d.clone(), d.clone()], dim=-1)
+ 
+
+    for i in range(N):
+        x = p2d[..., i, 0] - cx
+        y = p2d[..., i, 1] - cy
+
+        # Populate A matrix
+        A[..., 2 * i, 0] = -fx
+        A[..., 2 * i, 2] = x
+        A[..., 2 * i + 1, 1] = -fy
+        A[..., 2 * i + 1, 2] = y
+
+        # Populate b vector
+        d[..., 2 * i] = fx * p3d[..., i, 0] - x * p3d[..., i, 2]
+        d[..., 2 * i + 1] = fy * p3d[..., i, 1] - y * p3d[..., i, 2]
+
+    A = A.view(-1, N * 2, 3)  # Flatten batch and time
+    d = d.view(-1, N * 2, 1)     # Flatten batch and time
+
+    A_pinv = differentiable_pinv(A)
+    x = torch.matmul(A_pinv, d).squeeze(-1)
+    residuals = (A @ x.unsqueeze(-1)).squeeze(-1) - d.squeeze()
+    
+    return x.unsqueeze(2), A, d, residuals
+
+def get_root_m_estimation(p3d, p2d, camera, huber_delta=170 / 1000):
+    """
+    M-estimation version: Applies Huber loss weighting to mitigate the impact of outliers.
+    """
+    root, A, d, residuals = LSR(p3d, p2d, camera)
+
+    # Compute Huber weights
+    huber_weights = torch.where(residuals.abs() < huber_delta, torch.ones_like(residuals), huber_delta / residuals.abs())
+    
+    # Apply weights to A and d
+    A_weighted = huber_weights.unsqueeze(-1) * A
+    d_weighted = huber_weights.unsqueeze(-1) * d
+    # Solve weighted least squares
+    A_pinv = differentiable_pinv(A_weighted)
+    x = torch.matmul(A_pinv, d_weighted).squeeze(-1)
+    x = x.view(p3d.shape[0], p3d.shape[1], 3)
+    return x.unsqueeze(2), residuals
+
+def get_root_ransac(p3d, p2d, camera, num_samples=50, threshold=170 / 1000, inlier_ratio=0.6):
+    """
+    RANSAC-based root position estimation.
+
+    Args:
+        p3d (torch.Tensor): 3D joint coordinates of shape (B, T, N, 3).
+        p2d (torch.Tensor): 2D joint projections of shape (B, T, N, 2).
+        camera (torch.Tensor): Camera intrinsic parameters of shape (B, 4).
+        num_samples (int): Number of RANSAC iterations.
+        threshold (float): Error threshold to classify inliers.
+        inlier_ratio (float): Minimum ratio of inliers required for a valid model.
+
+    Returns:
+        best_root (torch.Tensor): Best estimated root positions (B, T, 3).
+        best_inliers (torch.Tensor): Inlier masks used in final estimation (B, T, N).
+    """
+    batch_size, seq_len, _, _ = p3d.shape
+    num_joints = 16
+    best_root = torch.zeros(batch_size, seq_len, 3, device=p3d.device)
+    best_inlier_counts = torch.zeros(batch_size, seq_len, device=p3d.device)
+
+    for _ in range(num_samples):
+        # Step 1: Randomly select 50% of the joints for model fitting
+        sample_idx = torch.randint(0, num_joints, (batch_size, seq_len, 17 // 2), device=p3d.device)
+        sampled_p3d = torch.gather(p3d, 2, sample_idx.unsqueeze(-1).expand(-1, -1, -1, 3))
+        sampled_p2d = torch.gather(p2d, 2, sample_idx.unsqueeze(-1).expand(-1, -1, -1, 2))
+        # Step 2: Compute root position using least squares regression (LSR)
+        root, A, d, residuals = LSR(sampled_p3d, sampled_p2d, camera)  # Assumes LSR returns residuals
+        root = root.reshape(batch_size, seq_len, 3)  # Shape: [B, T, 3]
+
+        # Step 3: Compute inliers - residuals below threshold
+        residuals = residuals.view(batch_size, seq_len, num_joints)  # Shape: [B, T, N]
+        inlier_mask = residuals < threshold  # Boolean mask: [B, T, N]
+        inlier_count = inlier_mask.sum(dim=-1)  # Shape: [B, T]
+
+        # Step 4: Check if the current model is better (i.e., has more inliers)
+        update_mask = inlier_count > best_inlier_counts  # Shape: [B, T]
+        best_root[update_mask] = root[update_mask]  # Ensure shape is [B, T, 3]
+        best_inlier_counts[update_mask] = inlier_count[update_mask].float()
+
+    # Step 5: Recompute final root using best inliers
+    final_mask = best_inlier_counts / num_joints >= inlier_ratio  # Ensure we have enough inliers
+    best_root[~final_mask] = 0  # Discard unreliable estimates
+    return best_root.unsqueeze(2), final_mask
+
+def get_root_lms(p3d, p2d, camera):
+    """
+    Least Median of Squares (LMS) version: Finds the root position that minimizes the median residual.
+    """
+    root, A, d, residuals = LSR(p3d, p2d, camera)
+
+    # Compute median of residuals
+    median_residual = torch.median(residuals.abs(), dim=-1, keepdim=True)[0]
+
+    # Select inliers where residuals are within a threshold of the median
+    threshold = 1.5 * median_residual
+    inlier_mask = residuals.abs() < threshold
+
+    # Apply inliers to refine estimation
+    A_inliers = A * inlier_mask.unsqueeze(-1)
+    d_inliers = d * inlier_mask.unsqueeze(-1)
+
+    A_pinv = differentiable_pinv(A_inliers)
+    x = torch.matmul(A_pinv, d_inliers).squeeze(-1)
+    x = x.view(p3d.shape[0], p3d.shape[1], 3)
+    return x.unsqueeze(2), residuals
 
 def refine_pose(p3d, p2d, camera, iterations=3, alpha=10):
     """
