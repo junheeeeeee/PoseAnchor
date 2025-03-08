@@ -319,6 +319,7 @@ def main():
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
         wandb_id = checkpoint['wandb_id'] if 'wandb_id' in checkpoint else wandb_id
         min_loss = checkpoint['min_loss'] if 'min_loss' in checkpoint else min_loss
+        min_root = 100
         if rank == 0:
             print('Loading checkpoint', chk_filename)
             print('This model was trained for {} epochs'.format(checkpoint['epoch']))
@@ -480,7 +481,8 @@ def main():
                 predicted_3d_pos = model_pos_train(inputs_2d)
 
                 gt2d = project_to_2d_linear(inputs_3d + inputs_traj, cameras_train)
-                pred_traj, _ = get_root(predicted_3d_pos, inputs_2d, cameras_train)
+                pred_traj, mask = get_root(predicted_3d_pos, inputs_2d, cameras_train)
+                
                 predicted_2d_pos = project_to_2d_linear(predicted_3d_pos + pred_traj, cameras_train)
                 # predicted_3d_pos ,pred_traj, predicted_2d_pos = refine_pose(predicted_3d_pos, inputs_2d, cameras_train, iterations=3)
 
@@ -504,13 +506,29 @@ def main():
                 b, f , _, _ = inputs_3d.shape
                 loss_3d_pos = weighted_mpjpe(inputs_3d, predicted_3d_pos, w_mpjpe)
                 # loss_3d_pos = mpjpe(inputs_3d.reshape(b,f, -1), predicted_3d_pos.reshape(b,f, -1))
-                loss_2d_pos = mpjpe(gt2d, predicted_2d_pos)
-                inputs_2d_error =  mpjpe(gt2d, inputs_2d)
-                loss_resid = mpjpe(inputs_traj, pred_traj)
 
+                inputs_3d_masked = inputs_3d.clone()
+                inputs_3d_masked[mask] = 0
+                inputs_3d_masked[:, :, :1] = inputs_traj
+                predicted_3d_pos_masked = predicted_3d_pos.clone()
+                predicted_3d_pos_masked[mask] = 0
+                predicted_3d_pos_masked[:, :, :1] = pred_traj
+                gt2d_masked = gt2d.clone()
+                gt2d_masked[mask] = 0
+                predicted_2d_pos_masked = predicted_2d_pos.clone()
+                predicted_2d_pos_masked[mask] = 0
+
+                loss_3d_pos = weighted_mpjpe(inputs_3d_masked, predicted_3d_pos_masked, w_mpjpe)
+                inputs_2d_error = mpjpe(gt2d, inputs_2d)
+                loss_2d_pos = mpjpe(gt2d_masked, predicted_2d_pos_masked)
+                pose_2d_error = mpjpe(gt2d, predicted_2d_pos)
+                loss_root = mpjpe(inputs_traj, pred_traj)
+                loss_resid = mpjpe(inputs_traj, pred_traj)
                 loss_mpj = mpjpe(predicted_3d_pos - predicted_3d_pos[..., :1], inputs_3d - inputs_3d[..., :1])
 
                 # Temporal Consistency Loss
+                predicted_3d_pos[:, :, :1] = pred_traj
+                inputs_3d[:, :, :1] = inputs_traj
                 dif_seq = predicted_3d_pos[:,1:,:,:] - predicted_3d_pos[:,:-1,:,:]
                 weights_joints = torch.ones_like(dif_seq).cuda()
                 weights_mul = w_mpjpe
@@ -521,7 +539,7 @@ def main():
                 loss_diff = 0.5 * dif_seq + 2.0 * mean_velocity_error_train(predicted_3d_pos, inputs_3d, axis=1)
                 
 
-                loss_total = loss_3d_pos + loss_diff + loss_2d_pos * args.loss2d + loss_resid * args.lossroot
+                loss_total = loss_3d_pos + loss_diff
                 
                 loss_total.backward(loss_total.clone().detach())
 
@@ -535,13 +553,13 @@ def main():
                 batch_time.update(time() - end)
                 end = time()
                 mpj.update(loss_mpj.item() * 1000, inputs_3d.shape[0])
-                mpj_2d.update(loss_2d_pos.item() * 1000 - inputs_2d_error.item() * 1000, inputs_3d.shape[0])
+                mpj_2d.update(pose_2d_error.item() * 1000 - inputs_2d_error.item() * 1000, inputs_3d.shape[0])
                 root.update(loss_resid.item() * 1000, inputs_3d.shape[0])
                 if rank == 0:
                     bar.suffix = '({batch}/{size}) Batch: {bt:.3f}s | Elapsed Time: {ttl:} | ETA: {eta:} ' \
                             '| MPJPE: {mpj: .1f}({loss: .1f}) | 2D Error:  {p2d: .1f}({input2d: .1f})| MRPE: {res: .1f}({root: .1f})' \
                     .format(batch=i + 1, size=len(dataloader), bt=batch_time.avg,
-                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= loss_2d_pos.item() * 1000,res=loss_resid.item() * 1000 ,input2d = mpj_2d.avg, root = root.avg)
+                            ttl=bar.elapsed_td, eta=bar.eta_td, loss=mpj.avg, mpj=loss_mpj.item() * 1000, p2d= pose_2d_error.item() * 1000,res=loss_resid.item() * 1000 ,input2d = mpj_2d.avg, root = root.avg)
                     bar.next()
                 i += 1
             if rank == 0:
@@ -728,6 +746,21 @@ def main():
             if rank == 0:
                 if losses_3d_valid * 1000 < min_loss:
                     min_loss = losses_3d_valid * 1000
+                    print("save best checkpoint")
+                    torch.save({
+                        'epoch': epoch,
+                        'lr': lr,
+                        'optimizer': optimizer.state_dict(),
+                        'model_pos': model_pos_train.state_dict(),
+                        "min_loss": min_loss,
+                        'wandb_id': wandb_id
+                        # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
+                        # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
+                    }, best_chk_path)
+                best_chk_path = os.path.join(args.checkpoint, 'best_epochR.bin'.format(epoch))
+                best_chk_path = "checkpoint/" + best_chk_path
+                if valid_root * 1000 < min_root:
+                    min_root = valid_root * 1000
                     print("save best checkpoint")
                     torch.save({
                         'epoch': epoch,
