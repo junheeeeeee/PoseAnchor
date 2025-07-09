@@ -1,4 +1,5 @@
-# RootPose
+# PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation
+Official implementation of ICCV 2025 paper
 
 
 ## Environment
