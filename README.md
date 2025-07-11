@@ -27,7 +27,7 @@ ${POSE_ROOT}/
 |   |-- data_2d_h36m_gt.npz
 |   |-- data_2d_h36m_cpn_ft_h36m_dbb.npz
 
-# Training from scratch
+## Training from scratch
 
 Training on the 243 frames with two GPUs:
 
