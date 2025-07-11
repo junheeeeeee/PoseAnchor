@@ -14,11 +14,18 @@ The code is conducted under the following environment:
 
 ## Dataset
 
-The Human3.6M dataset and HumanEva dataset setting follow the [VideoPose3D](https://github.com/facebookresearch/VideoPose3D).
+The Human3.6M dataset dataset setting follow the [VideoPose3D](https://github.com/facebookresearch/VideoPose3D).
 Please refer to it to set up the Human3.6M dataset (under ./data directory).
 
 The MPI-INF-3DHP dataset setting follows the [MMPose](https://github.com/open-mmlab/mmpose).
 Please refer it to set up the MPI-INF-3DHP dataset (also under ./data directory).
+
+```bash
+${POSE_ROOT}/
+|-- data
+|   |-- data_3d_h36m.npz
+|   |-- data_2d_h36m_gt.npz
+|   |-- data_2d_h36m_cpn_ft_h36m_dbb.npz
 
 # Training from scratch
 
