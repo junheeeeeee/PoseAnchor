@@ -32,7 +32,9 @@ ${POSE_ROOT}/
 
 Training on the 243 frames with two GPUs:
 
->  torchrun --nproc_per_node=2 run.py -c checkpoint
+```bash
+torchrun --nproc_per_node=2 run.py -c checkpoint
+```
 
 ## Acknowledgement
 
