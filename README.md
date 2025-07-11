@@ -15,10 +15,7 @@ The code is conducted under the following environment:
 ## Dataset
 
 The Human3.6M dataset dataset setting follow the [VideoPose3D](https://github.com/facebookresearch/VideoPose3D).
-Please refer to it to set up the Human3.6M dataset (under ./data directory).
-
-The MPI-INF-3DHP dataset setting follows the [MMPose](https://github.com/open-mmlab/mmpose).
-Please refer it to set up the MPI-INF-3DHP dataset (also under ./data directory).
+Please refer to it to set up the Human3.6M dataset.
 
 ```bash
 ${POSE_ROOT}/
