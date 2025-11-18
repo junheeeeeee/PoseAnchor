@@ -1,4 +1,5 @@
 # PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation
+![](./main.png)
 
 Official PyTorch implementation of the ICCV 2025 paper:  
 **“PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation”**
