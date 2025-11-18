@@ -40,3 +40,16 @@ Thanks for the baselines, we construct the code based on them:
 * MixSTE
 * VideoPose3D
 * SimpleBaseline
+
+
+## 🤝 Citation
+If you find this repository useful for your work, please consider citing it as follows:
+```bibtex
+@inproceedings{kim2025poseanchor,
+  title={PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation},
+  author={Kim, Jun-Hee and Han, Jumin and Lee, Seong-Whan},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  pages={7079--7088},
+  year={2025}
+}
+```
