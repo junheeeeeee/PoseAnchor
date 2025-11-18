@@ -13,10 +13,6 @@ Official PyTorch implementation of the ICCV 2025 paper:
 
 </div>
 
----
-
-## 🤝 Citation
-
 If you find this repository useful for your work, please consider citing:
 
 ```bibtex
@@ -28,6 +24,8 @@ If you find this repository useful for your work, please consider citing:
   year      = {2025}
 }
 ```
+---
+
 
 ## Environment
 
