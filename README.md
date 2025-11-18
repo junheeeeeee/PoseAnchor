@@ -13,6 +13,22 @@ Official PyTorch implementation of the ICCV 2025 paper:
 
 </div>
 
+---
+
+## 🤝 Citation
+
+If you find this repository useful for your work, please consider citing:
+
+```bibtex
+@inproceedings{kim2025poseanchor,
+  title     = {PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation},
+  author    = {Kim, Jun-Hee and Han, Jumin and Lee, Seong-Whan},
+  booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  pages     = {7079--7088},
+  year      = {2025}
+}
+```
+
 ## Environment
 
 The code is developed and tested under the following environment:
@@ -107,17 +123,4 @@ We build on the following excellent baselines and codebases:
 
 If you use parts of this repository, please also consider citing these works.
 
----
 
-## 🤝 Citation
-
-If you find this repository useful for your work, please consider citing:
-
-```bibtex
-@inproceedings{kim2025poseanchor,
-  title     = {PoseAnchor: Robust Root Position Estimation for 3D Human Pose Estimation},
-  author    = {Kim, Jun-Hee and Han, Jumin and Lee, Seong-Whan},
-  booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision},
-  pages     = {7079--7088},
-  year      = {2025}
-}
