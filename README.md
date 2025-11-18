@@ -86,8 +86,6 @@ You can change training settings (e.g., window size, batch size, learning rate) 
 
 We report 3D human pose estimation performance on Human3.6M following the standard evaluation protocol used in VideoPose3D.
 
-> Replace `XX.X` below with the actual numbers from the paper.
-
 | Method                | Frames | Protocol | MPJPE (mm) | PA-MPJPE (mm) |
 |-----------------------|:------:|:--------:|:----------:|:-------------:|
 | VideoPose3D           |  243   |    #1    |    46.8    |     36.8      |
